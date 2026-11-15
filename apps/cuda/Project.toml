@@ -1,0 +1,22 @@
+name = "JutulDarcyRunCUDA"
+uuid = "b524b21c-dea1-446c-b90a-46a7bc203676"
+version = "0.1.0"
+
+[deps]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+Jutul = "2b460a1a-8a2b-45b2-b125-b5c536396eb9"
+JutulDarcy = "82210473-ab04-4dce-b31b-11573c4f8e0a"
+JutulDarcyRun = "92126991-471c-469f-893d-79b88a764fcc"
+
+[sources]
+JutulDarcyRun = {path = "../.."}
+
+[compat]
+CUDA = "6.5"
+Jutul = "0.5.9"
+JutulDarcy = "0.4.1"
+JutulDarcyRun = "0.1"
+julia = "1.12"
+
+[apps.jdrun-cuda]
+julia_flags = ["-O3", "--threads=auto"]

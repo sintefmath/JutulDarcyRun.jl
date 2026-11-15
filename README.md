@@ -4,13 +4,30 @@ Run JutulDarcy reservoir simulations from the terminal with Julia 1.12 or later.
 
 ## Install
 
-From a local checkout, run this at Julia's package prompt (`]`).
+From a local checkout, install the CPU app with the same optimization level
+the launcher uses so Julia can reuse the install-time cache on the first run.
 
-```text
-app develop /path/to/JutulDarcyRun.jl
+```sh
+julia -O3 --threads=auto -e 'using Pkg; Pkg.Apps.develop(path=ARGS[1])' /path/to/JutulDarcyRun.jl
 ```
 
-Use `app add /path/to/JutulDarcyRun.jl` to install from a committed checkout.
+For a committed CPU checkout, start Julia with `julia -O3 --threads=auto` and
+use `app add /path/to/JutulDarcyRun.jl` at the package prompt (`]`).
+
+Install the GPU apps from their own projects in the checkout. Each project
+adds its own GPU dependencies to the shared simulation code.
+
+```sh
+julia -O3 --threads=auto -e 'using Pkg; Pkg.Apps.develop(path=ARGS[1])' /path/to/JutulDarcyRun.jl/apps/cuda
+julia -O3 --threads=auto -e 'using Pkg; Pkg.Apps.develop(path=ARGS[1])' /path/to/JutulDarcyRun.jl/apps/amdgpu
+```
+
+If the checkout's manifest still tracks a Git revision of JutulDarcy, activate
+the checkout and run `free JutulDarcy` at the package prompt to switch to the
+registered release. When upgrading an installation that previously provided all
+three commands, reinstall `jdrun` to refresh the registered launchers, then
+install the GPU commands you use.
+
 Add the `bin` subdirectory of your first Julia depot to `PATH`. With the default
 depot, this is `~/.julia/bin` on Linux and macOS or `%USERPROFILE%\.julia\bin` on Windows.
 See the [Pkg apps documentation](https://pkgdocs.julialang.org/v1/apps/) for more installation options.
@@ -31,6 +48,7 @@ jdrun --threads=8 -- MODEL.DATA
 the CPU solver with HYPRE for the CPR pressure solve. The GPU commands require a
 functional CUDA or ROCm device at runtime. All three commands can be installed
 on a CPU-only machine and start Julia with `-O3 --threads=auto` by default.
+CUDA and AMDGPU are dependencies of their respective launchers.
 
 Each command accepts Eclipse `.DATA` decks, `.AFI` files with RESQML grids, and
 Julia `.jl` scripts. A script runs in Julia's main workspace and
@@ -89,7 +107,7 @@ partitioned simulator on a single rank outside an MPI job.
 
 The default output directory is `<case>_jutul_output` next to the input file.
 Jutul writes native report steps to temporary files during the run. After a
-successful solve, JutulDarcy's StandardIO integration consolidates them into
+successful solve, JutulDarcy's `StandardOutput` consolidates them into
 `<case>.SMSPEC`, `<case>.UNSMRY`, `<case>.UNRST`, and `<case>.EGRID`.
 Subsequent runs replace the standard files for the same case. The writer uses
 deck grid data when present and a synthetic grid for cases without it.

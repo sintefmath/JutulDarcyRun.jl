@@ -20,20 +20,6 @@ function (@main)(args)
     return run_cli(args, "jdrun", :cpu)
 end
 
-module CUDAApp
-using ..JutulDarcyRun: run_cli
-function (@main)(args)
-    return run_cli(args, "jdrun-cuda", :ka_cuda)
-end
-end
-
-module AMDGPUApp
-using ..JutulDarcyRun: run_cli
-function (@main)(args)
-    return run_cli(args, "jdrun-amdgpu", :ka_amd)
-end
-end
-
 @compile_workload begin
     precompile_simulations(:ka)
     # HYPRE also initializes MPI when used as a single-process preconditioner.

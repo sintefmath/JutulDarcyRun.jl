@@ -171,7 +171,7 @@ function simulation_kwargs(args, mode)
     return kwarg
 end
 
-function run_cli(argv, command, backend)
+function run_cli(argv, command, backend; check_device = nothing)
     args = parse_commandline(argv, command, backend)
     try
         path = abspath(args[:filename])
@@ -200,7 +200,7 @@ function run_cli(argv, command, backend)
             return 0
         end
 
-        require_backend(mode)
+        isnothing(check_device) || check_device()
         case = load_case(path, extension; verbose = args[:verbose], split_wells = method == :nldd,
             include_tracers = !args[:skip_tracers])
         # GPU extensions and Julia scripts can define methods after this call began.

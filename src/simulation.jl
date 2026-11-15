@@ -1,16 +1,3 @@
-function require_backend(mode)
-    if mode == :ka_cuda
-        @eval import CUDA
-        Base.invokelatest(() -> CUDA.functional() && CUDA.has_cuda_gpu()) ||
-            throw(ArgumentError("No functional CUDA device found. jdrun-cuda requires a CUDA-capable GPU and driver."))
-    elseif mode == :ka_amd
-        @eval import AMDGPU
-        Base.invokelatest(() -> AMDGPU.functional() && AMDGPU.has_rocm_gpu()) ||
-            throw(ArgumentError("No functional ROCm device found. jdrun-amdgpu requires a ROCm-compatible GPU and driver."))
-    end
-    return nothing
-end
-
 function load_case(path, extension; verbose, split_wells, include_tracers = true)
     if extension == ".data"
         case = setup_case_from_data_file(path; verbose, split_wells, include_tracers, parse_arg = (; verbose))
