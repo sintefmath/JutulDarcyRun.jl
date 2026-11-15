@@ -1,4 +1,4 @@
-function run_mpi_case(path, extension, output_dir, name, args)
+function run_mpi_case(path, extension, output_dir, name, args; kwarg = simulation_kwargs(args, :mpi))
     MPI.Init()
     comm = MPI.COMM_WORLD
     rank = MPI.Comm_rank(comm)
@@ -6,7 +6,7 @@ function run_mpi_case(path, extension, output_dir, name, args)
         case = load_case(path, extension; verbose = rank == 0 && args[:verbose],
             split_wells = true, include_tracers = !args[:skip_tracers])
         # A case script can define new methods needed for simulator setup and output.
-        Base.invokelatest(run_mpi_simulation, case, output_dir, name, comm, args)
+        Base.invokelatest(run_mpi_simulation, case, output_dir, name, comm, args; kwarg)
     catch err
         if MPI.Comm_size(comm) > 1
             failure = args[:verbose] ? CapturedException(err, catch_backtrace()) : err
@@ -20,9 +20,9 @@ function run_mpi_case(path, extension, output_dir, name, args)
     return nothing
 end
 
-function run_mpi_simulation(case::JutulCase, output_dir, name, comm, args)
+function run_mpi_simulation(case::JutulCase, output_dir, name, comm, args; kwarg = simulation_kwargs(args, :mpi))
     case = limit_case(case, args[:number_of_steps])
-    kwarg = simulation_kwargs(args, :mpi)
+    check_solver_layout(case, :mpi, args)
     reservoir = JutulDarcy.reservoir_model(case)
     components = JutulDarcy.number_of_components(reservoir.system)
     block_size = degrees_of_freedom_per_entity(reservoir, Cells())

@@ -22,9 +22,21 @@ function limit_case(case::JutulCase, limit)
     return case
 end
 
-function run_simulation(case::JutulCase, output_dir, name, mode, args)
+function check_solver_layout(case, mode, args)
+    reservoir = JutulDarcy.reservoir_model(case)
+    is_cell_major(matrix_layout(reservoir.context)) && return nothing
+    if mode != :default
+        throw(ArgumentError("This backend requires a cell-major case. Set block_backend = true when building the model."))
+    end
+    if any(key -> !isnothing(args[key]), (:linear_solver, :precond, :global_smoother, :rtol))
+        throw(ArgumentError("Krylov solver options require a cell-major case. Set block_backend = true when building the model."))
+    end
+    return nothing
+end
+
+function run_simulation(case::JutulCase, output_dir, name, mode, args; kwarg = simulation_kwargs(args, mode))
     case = limit_case(case, args[:number_of_steps])
-    kwarg = simulation_kwargs(args, mode)
+    check_solver_layout(case, mode, args)
     mkpath(output_dir)
     mktempdir(output_dir) do scratch
         native = mkdir(joinpath(scratch, "jutul"))

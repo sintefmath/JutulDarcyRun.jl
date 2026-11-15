@@ -1,4 +1,8 @@
-function parse_commandline(argv, command, backend)
+const STANDALONE_PRECONDITIONERS = (:ilu0, :dilu, :jacobi, :spai0)
+const GLOBAL_SMOOTHERS = (:ilu0, :ilu, :dilu, :jacobi, :spai0, :vendor_ilu, :ka_ilu0, :ka_dilu, :ka_spai0)
+
+function parse_commandline(argv, command, launcher)
+    gpu = launcher != :cpu
     settings = ArgParseSettings(
         prog = command,
         description = "Run a JutulDarcy reservoir simulation and export unified Eclipse results.",
@@ -13,15 +17,15 @@ function parse_commandline(argv, command, backend)
     end
 
     add_arg_group!(settings, "Linear and nonlinear solvers")
-    if backend == :cpu
+    if !gpu
         @add_arg_table! settings begin
             "--backend"
-                help = "CPU solver backend (ka, hypre or mpi)"
+                help = "CPU solver backend (ka by default, hypre or cpu for HYPRE, or mpi)"
                 arg_type = Symbol
                 default = :ka
-                range_tester = x -> x in (:ka, :hypre, :mpi)
+                range_tester = x -> x in (:ka, :hypre, :cpu, :mpi)
             "--method"
-                help = "Nonlinear method (newton or nldd, which requires hypre or mpi)"
+                help = "Nonlinear method (newton or nldd, which requires hypre, cpu or mpi)"
                 arg_type = Symbol
                 default = :newton
                 range_tester = x -> x in (:newton, :nldd)
@@ -29,45 +33,54 @@ function parse_commandline(argv, command, backend)
     end
     @add_arg_table! settings begin
         "--linear-solver"
-            help = "Krylov solver (gmres, fgmres or bicgstab)"
+            help = gpu ? "Krylov solver (fgmres by default, gmres or bicgstab)" :
+                "Krylov solver (gmres by default, fgmres or bicgstab)"
             arg_type = Symbol
             range_tester = x -> x in (:gmres, :fgmres, :bicgstab)
         "--single-precision-linear-solver"
             help = "Use a Float32 linear solver with FGMRES (true or false, enabled by default on GPU)"
             arg_type = Bool
         "--precond"
-            help = "Preconditioner (cprw, cpr, ilu0, jacobi or spai0)"
+            help = gpu ? "Preconditioner (cprw, cpr, ilu0, dilu or spai0)" :
+                "Preconditioner (cprw, cpr, ilu0, dilu, jacobi or spai0)"
             arg_type = Symbol
-            range_tester = x -> x in (:cprw, :cpr, :ilu0, :jacobi, :spai0)
+            range_tester = x -> x in (:cprw, :cpr, STANDALONE_PRECONDITIONERS...) && !(gpu && x == :jacobi)
         "--global-smoother"
-            help = "Full-system smoother (default ilu0, options include dilu, spai0 and vendor_ilu on GPU)"
+            help = gpu ? "CPR full-system smoother (ilu0 by default, dilu, spai0 or vendor_ilu)" :
+                "CPR full-system smoother (ilu0 by default, dilu, jacobi or spai0)"
             arg_type = Symbol
+            range_tester = x -> x in GLOBAL_SMOOTHERS
         "--rtol"
             help = "Relative linear solver tolerance"
             arg_type = Float64
+            range_tester = x -> 0 < x < 1
         "--tol-cnv"
             help = "CNV tolerance for mass balance"
             arg_type = Float64
+            range_tester = x -> isfinite(x) && x > 0
         "--tol-mb"
             help = "Scaled L1 mass balance tolerance"
             arg_type = Float64
+            range_tester = x -> isfinite(x) && x > 0
         "--tol-dp-well"
             help = "Well connection pressure drop tolerance in bar"
             arg_type = Float64
+            range_tester = x -> isfinite(x) && x > 0
         "--tol-factor-final-iteration"
             help = "Factor applied to tolerances on the final Newton iteration"
             arg_type = Float64
+            range_tester = x -> isfinite(x) && x > 0
         "--relaxation"
             help = "Use nonlinear solver damping (true or false)"
             arg_type = Bool
         "--max-nonlinear-iterations"
             help = "Maximum Newton iterations before cutting a timestep"
             arg_type = Int
-            range_tester = x -> x > 0
+            range_tester = x -> 1 <= x <= 10000
         "--max-timestep-cuts"
-            help = "Maximum timestep cuts per report step"
+            help = "Maximum cuts per internal timestep"
             arg_type = Int
-            range_tester = x -> x >= 0
+            range_tester = x -> 0 <= x <= 10000
         "--presolve-wells"
             help = "Solve wells before each linearization (true or false)"
             arg_type = Bool
@@ -80,7 +93,7 @@ function parse_commandline(argv, command, backend)
             arg_type = Int
             range_tester = x -> x > 0
         "--timesteps"
-            help = "Timestep selection (auto, iteration or none)"
+            help = "Adaptive timestep selectors (auto, iteration or none). Step limits and cuts still apply."
             arg_type = Symbol
             range_tester = x -> x in (:auto, :iteration, :none)
         "--timesteps-target-iterations"
@@ -88,12 +101,13 @@ function parse_commandline(argv, command, backend)
             arg_type = Int
             range_tester = x -> x > 0
         "--timesteps-target-ds"
-            help = "Target saturation change for timestep selection (requires hypre)"
+            help = "Maximum target saturation change as a fraction (requires hypre or cpu and auto timestepping)"
             arg_type = Float64
+            range_tester = x -> 0 < x <= 1
         "--initial-timestep"
             help = "Initial timestep in days"
             arg_type = Float64
-            range_tester = x -> x > 0
+            range_tester = x -> isfinite(x) && x > 0
         "--max-timestep"
             help = "Maximum timestep in days"
             arg_type = Float64
@@ -118,14 +132,14 @@ function parse_commandline(argv, command, backend)
             help = "Also export field, well and group summary time series as CSV in SI units"
             action = :store_true
         "--output-substates"
-            help = "Include internal timesteps in the Jutul results and summary"
+            help = "Include internal timesteps in summary, CSV, and VTK output (single process)"
             action = :store_true
         "--info-level"
             help = "Simulation verbosity (-1 for quiet)"
             arg_type = Int
             default = 1
         "--report-level"
-            help = "Detail level of Jutul convergence reports"
+            help = "Internal Jutul report detail (0 for compact statistics, 1 or higher for iteration details)"
             arg_type = Int
             default = 0
             range_tester = x -> x >= 0
@@ -139,10 +153,47 @@ function parse_commandline(argv, command, backend)
     return parse_args(argv, settings; as_symbols = true)
 end
 
+function solver_smoother(args, mode)
+    precond = args[:precond]
+    smoother = args[:global_smoother]
+    if precond in STANDALONE_PRECONDITIONERS
+        isnothing(smoother) || throw(ArgumentError(
+            "--global-smoother applies to CPR. Use --precond alone to select a standalone smoother."))
+        smoother = precond
+    end
+    gpu = mode in (:ka_cuda, :ka_amd)
+    smoother == :vendor_ilu && !gpu && throw(ArgumentError("--global-smoother vendor_ilu requires a GPU launcher"))
+    smoother == :jacobi && gpu && throw(ArgumentError("Jacobi is available on CPU backends"))
+    if smoother == :dilu
+        return :ka_dilu
+    elseif smoother == :jacobi && mode == :ka
+        # KA CPU uses host vectors, but its symbolic smoother factory has no Jacobi entry.
+        return JacobiPreconditioner()
+    elseif isnothing(smoother) || smoother == :ilu
+        return :ilu0
+    end
+    return smoother
+end
+
 function simulation_kwargs(args, mode)
+    method = get(args, :method, :newton)
+    method == :newton || mode in (:default, :mpi) ||
+        throw(ArgumentError("--method nldd requires --backend hypre, cpu or mpi"))
+    if !isnothing(args[:timesteps_target_ds])
+        mode == :default || throw(ArgumentError("--timesteps-target-ds requires --backend hypre or cpu"))
+        something(args[:timesteps], :auto) == :auto ||
+            throw(ArgumentError("--timesteps-target-ds requires --timesteps auto"))
+    end
+    if !isnothing(args[:timesteps_target_iterations]) && args[:timesteps] == :none
+        throw(ArgumentError("--timesteps-target-iterations requires --timesteps auto or iteration"))
+    end
+    if mode == :mpi
+        args[:precond] == :cprw && throw(ArgumentError("MPI supports --precond cpr for pressure preconditioning"))
+        args[:output_substates] && throw(ArgumentError("MPI output supports report steps only"))
+    end
     kwarg = Dict{Symbol, Any}(
         :mode => mode,
-        :method => get(args, :method, :newton),
+        :method => method,
         :info_level => args[:info_level],
         :report_level => args[:report_level],
         :output_substates => args[:output_substates],
@@ -154,43 +205,38 @@ function simulation_kwargs(args, mode)
         value = args[key]
         isnothing(value) || (kwarg[key] = value)
     end
-    solver = get(kwarg, :linear_solver, :fgmres)
+    solver = args[:linear_solver]
     gpu = mode in (:ka_cuda, :ka_amd)
-    single_precision = something(get(args, :single_precision_linear_solver, nothing), gpu && solver == :fgmres)
+    if gpu && isnothing(solver)
+        kwarg[:linear_solver] = :fgmres
+    end
+    fgmres_compatible = isnothing(solver) || solver == :fgmres
+    single_precision = something(args[:single_precision_linear_solver], gpu && fgmres_compatible)
     if single_precision
         (gpu || mode == :ka) || throw(ArgumentError(
             "Single precision linear solving requires a KernelAbstractions backend"))
-        solver == :fgmres || throw(ArgumentError("Single precision linear solving requires FGMRES"))
+        fgmres_compatible || throw(ArgumentError("Single precision linear solving requires FGMRES"))
         kwarg[:single_precision_linear_solver] = true
     end
     for (key, value, scale) in (
             (:target_its, args[:timesteps_target_iterations], 1),
             (:target_ds, args[:timesteps_target_ds], 1),
             (:initial_dt, args[:initial_timestep], si_unit(:day)),
-            (:max_dt, args[:max_timestep], si_unit(:day)))
+            (:max_timestep, args[:max_timestep], si_unit(:day)))
         isnothing(value) || (kwarg[key] = value * scale)
     end
-    linear_solver_arg = (;)
+    smoother_type = solver_smoother(args, mode)
+    linear_solver_arg = (; smoother_type)
     if mode in (:default, :mpi)
         kwarg[:linear_solver_backend] = :cpu
-        linear_solver_arg = (amg_type = :hypre,)
+        linear_solver_arg = (; smoother_type, amg_type = :hypre)
     end
-    smoother_type = args[:global_smoother]
-    if smoother_type == :ilu || (isnothing(smoother_type) && get(kwarg, :precond, :cpr) in (:cpr, :cprw))
-        smoother_type = :ilu0
-    elseif smoother_type == :dilu
-        # The KA-prefixed spelling also selects DILU with HYPRE and MPI.
-        smoother_type = :ka_dilu
-    end
-    if !isnothing(smoother_type)
-        linear_solver_arg = (; linear_solver_arg..., smoother_type)
-    end
-    isempty(linear_solver_arg) || (kwarg[:linear_solver_arg] = linear_solver_arg)
+    kwarg[:linear_solver_arg] = linear_solver_arg
     return kwarg
 end
 
-function run_cli(argv, command, backend; check_device = nothing)
-    args = parse_commandline(argv, command, backend)
+function run_cli(argv, command, launcher; check_device = nothing)
+    args = parse_commandline(argv, command, launcher)
     try
         path = abspath(args[:filename])
         isfile(path) || throw(ArgumentError("Input file does not exist: $path"))
@@ -199,30 +245,25 @@ function run_cli(argv, command, backend; check_device = nothing)
         extension in (".data", ".afi", ".jl") ||
             throw(ArgumentError("Expected a .DATA, .AFI, or .jl input file, got $path"))
 
-        mode = backend == :cpu ? args[:backend] : backend
-        mode = mode == :hypre ? :default : mode
-        method = get(args, :method, :newton)
-        method == :newton || mode in (:default, :mpi) ||
-            throw(ArgumentError("--method nldd requires --backend hypre or --backend mpi"))
-        isnothing(args[:timesteps_target_ds]) || mode == :default ||
-            throw(ArgumentError("--timesteps-target-ds requires --backend hypre"))
+        mode = launcher == :cpu ? args[:backend] : launcher
+        mode = mode in (:hypre, :cpu) ? :default : mode
+        kwarg = simulation_kwargs(args, mode)
         !args[:skip_tracers] || extension == ".data" ||
             throw(ArgumentError("--skip-tracers applies to Eclipse .DATA input"))
 
         output_dir = args[:output_path]
         output_dir = isnothing(output_dir) ? joinpath(dirname(path), name * "_jutul_output") : abspath(output_dir)
         if mode == :mpi
-            args[:output_substates] && throw(ArgumentError("MPI output supports report steps only"))
             @eval import PartitionedArrays
-            Base.invokelatest(run_mpi_case, path, extension, output_dir, name, args)
+            Base.invokelatest(run_mpi_case, path, extension, output_dir, name, args; kwarg)
             return 0
         end
 
         isnothing(check_device) || check_device()
-        case = load_case(path, extension; verbose = args[:verbose], split_wells = method == :nldd,
+        case = load_case(path, extension; verbose = args[:verbose], split_wells = kwarg[:method] == :nldd,
             include_tracers = !args[:skip_tracers])
         # GPU extensions and Julia scripts can define methods after this call began.
-        Base.invokelatest(run_simulation, case, output_dir, name, mode, args)
+        Base.invokelatest(run_simulation, case, output_dir, name, mode, args; kwarg)
     catch err
         if err isa ArgumentError && !args[:verbose]
             println(stderr, command, ": ", err.msg)

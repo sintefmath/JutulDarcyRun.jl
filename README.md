@@ -34,12 +34,39 @@ jdrun --help
 
 Inputs can be Eclipse `.DATA` decks, `.AFI` files, or Julia scripts that define a
 top-level `case::JutulCase`. The CPU app uses KernelAbstractions by default.
-Use `--backend hypre` for HYPRE. For GPU runs, use `jdrun-cuda` or `jdrun-amdgpu`
+Use `--backend cpu` or `--backend hypre` for the CPU path with HYPRE as the CPR
+pressure solver. For GPU runs, use `jdrun-cuda` or `jdrun-amdgpu`
 with a working CUDA or ROCm setup.
 
 Results go in `<case>_jutul_output` next to the input. The Eclipse output includes
 the grid (`.EGRID`), report-step states (`.UNRST`), and summary (`.SMSPEC` and
 `.UNSMRY`). Add `--vtk` for ParaView files or `--csv` for summary time series.
+`--output-substates` includes internal timesteps in the summary, CSV, and VTK
+output for single-process runs.
+
+### Solver options
+
+`--precond cpr` and `--precond cprw` select a two-stage preconditioner. Use
+`--global-smoother` to choose its full-system stage. `--precond ilu0`,
+`--precond dilu`, and `--precond spai0` select standalone smoothers. Jacobi is
+available on CPU, and `--global-smoother vendor_ilu` uses the GPU library's ILU.
+MPI supports `cpr` for pressure preconditioning.
+
+`--linear-solver` selects GMRES, FGMRES, or BiCGSTAB. The GPU launchers use
+Float32 FGMRES by default. Select `--single-precision-linear-solver false` to
+use Float64, or choose another Krylov solver. The `ka` CPU backend also accepts
+Float32 FGMRES.
+
+`--timesteps none` disables the adaptive selectors. Initial and maximum step
+sizes are in days, and timestep cuts can still occur. The saturation-change
+target is a fraction and applies to automatic timestepping with the HYPRE CPU
+backend.
+
+Pass Julia flags before `--` to override the launcher's thread count.
+
+```sh
+jdrun --threads=8 -- MODEL.DATA --backend ka --global-smoother dilu
+```
 
 ### MPI
 
