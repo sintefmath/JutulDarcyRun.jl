@@ -4,23 +4,24 @@ Run JutulDarcy reservoir simulations from the terminal. Requires Julia 1.12 or l
 
 ## Install
 
-Start Julia with `julia -O3 --threads=8`. Press `]` to open the package prompt.
-
-```text
-app add https://github.com/sintefmath/JutulDarcyRun.jl
-```
-
-For a GPU launcher, press Backspace at an empty package prompt and choose
-the install command for your GPU.
+Start Julia with `julia -O3 --threads=8` and run the line for the backend you
+want.
 
 ```julia
 using Pkg
-Pkg.Apps.add(url="https://github.com/sintefmath/JutulDarcyRun.jl.git", subdir="apps/cuda")
-Pkg.Apps.add(url="https://github.com/sintefmath/JutulDarcyRun.jl.git", subdir="apps/amdgpu")
+repo = "https://github.com/sintefmath/JutulDarcyRun.jl.git"
+Pkg.Apps.add(url=repo, subdir="apps/ka")      # jdrun (CPU KernelAbstractions)
+Pkg.Apps.add(url=repo, subdir="apps/hypre")   # jdrun-hypre
+Pkg.Apps.add(url=repo, subdir="apps/mpi")     # jdrun-mpi
+Pkg.Apps.add(url=repo, subdir="apps/cuda")    # jdrun-cuda
+Pkg.Apps.add(url=repo, subdir="apps/amdgpu")  # jdrun-amdgpu
 ```
 
 Add the `bin` directory of your first Julia depot to `PATH`. The default is
 `~/.julia/bin` on Linux and macOS and `%USERPROFILE%\.julia\bin` on Windows.
+
+If you installed `jdrun` from the repository root, run `app rm JutulDarcyRun`
+at the package prompt before installing `apps/ka`.
 
 ## Run a case
 
@@ -33,34 +34,33 @@ jdrun --help
 ```
 
 Inputs can be Eclipse `.DATA` decks, `.AFI` files, or Julia scripts that define a
-top-level `case::JutulCase`. The CPU app uses KernelAbstractions by default.
-Use `--backend cpu` or `--backend hypre` for the CPU path with HYPRE as the CPR
-pressure solver. For GPU runs, use `jdrun-cuda` or `jdrun-amdgpu`
-with a working CUDA or ROCm setup.
+top-level `case::JutulCase`.
 
 Results go in `<case>_jutul_output` next to the input. The Eclipse output includes
 the grid (`.EGRID`), report-step states (`.UNRST`), and summary (`.SMSPEC` and
-`.UNSMRY`). Add `--vtk` for ParaView files or `--csv` for summary time series.
+`.UNSMRY`). The live `<case>.DBG` log captures terminal output. For MPI, it
+records rank 0. Add `--vtk` for ParaView files or `--csv` for summary time series.
 `--output-substates` includes internal timesteps in the summary, CSV, and VTK
 output for single-process runs.
 
 ### Solver options
 
-CPRW is the default for single-process iterative solves on CPU and GPU when
-the model uses grouped CSR blocks without tracer equations. Other block
-layouts and tracer models default to CPR. Models with one unknown per
-reservoir cell default to ILU(0). Use
-`--precond cpr` to select CPR, or use `--global-smoother` to change the
-full-system stage of CPRW or CPR. `--precond ilu0`,
-`--precond dilu`, and `--precond spai0` select standalone smoothers. Jacobi is
-available on CPU, and `--global-smoother vendor_ilu` uses the GPU library's ILU.
-MPI defaults to CPR for models with a block of multiple mass equations and to
-ILU(0) for other models.
+DILU is the default smoother. Use `--global-smoother ilu0` or
+`--global-smoother spai0` to change it in CPR or CPRW. `--precond dilu`,
+`--precond ilu0`, and `--precond spai0` select standalone smoothers.
+
+Use `--amg-rebuild-tolerance`, `--update-type`, and `--update-type-partial`
+to control KA AMG rebuilds. `--update-interval` and `--update-interval-partial`
+set the CPR update schedules. Omitted options use JutulDarcy's defaults.
 
 `--linear-solver` selects GMRES, FGMRES, or BiCGSTAB. The GPU launchers use
 Float32 FGMRES by default. Select `--single-precision-linear-solver false` to
 use Float64, or choose another Krylov solver. The `ka` CPU backend also accepts
-Float32 FGMRES.
+Float32 FGMRES. Use `--ka-workgroupsize` to set the workgroup size.
+
+GPU launchers merge similar wells and evaluate them on the GPU by default. Set
+`--wells-on-device false` to disable merging and evaluate wells on the CPU.
+Cases with wells that cannot be merged, such as tracer decks, use CPU well evaluation.
 
 `--timesteps none` disables the adaptive selectors. Initial and maximum step
 sizes are in days, and timestep cuts can still occur. The saturation-change
@@ -69,20 +69,18 @@ backend.
 
 ### Thread count
 
-`jdrun`, `jdrun-cuda`, and `jdrun-amdgpu` start with eight Julia threads.
+Each launcher starts with eight Julia threads.
 To change the count for one run, pass `--threads` before the first `--`.
 Pass the case path and solver options after it. [Julia Pkg app flags](https://pkgdocs.julialang.org/v1/apps/#Runtime-Julia-Flags)
 
 ```sh
 jdrun --threads=4 -- MODEL.DATA --precond cpr
 jdrun-cuda --threads=16 -- MODEL.DATA
-jdrun-amdgpu --threads=auto -- MODEL.DATA
 ```
 
 For a different default in a local checkout, edit `julia_flags` in the
 launcher's `Project.toml` and rerun `app develop .` from that project to
-regenerate the launcher. Use the repository root for `jdrun`, `apps/cuda`
-for `jdrun-cuda`, and `apps/amdgpu` for `jdrun-amdgpu`.
+regenerate the launcher.
 
 ### MPI
 
@@ -91,33 +89,24 @@ and output paths. For Julia case scripts, set `split_wells = true` when building
 the model. [MPI.jl configuration](https://juliaparallel.org/MPI.jl/stable/configuration/)
 
 ```sh
-mpiexec -n 4 jdrun MODEL.DATA --backend mpi
+mpiexec -n 4 jdrun-mpi MODEL.DATA
 ```
 
-On Windows, use `mpiexec -n 4 cmd.exe /c jdrun MODEL.DATA --backend mpi`.
-Each MPI rank gets eight Julia threads by default. Use `jdrun --threads=2 -- MODEL.DATA --backend mpi`
-in the `mpiexec` command to set the count per rank.
+On Windows, use `mpiexec -n 4 cmd.exe /c jdrun-mpi MODEL.DATA`.
+Pass `--threads=2 --` before the case path to set the thread count per rank.
 
 ## Develop locally
 
-Clone the repository and start Julia from its root.
+Clone the repository and start Julia from the variant you want to develop.
 
 ```sh
 git clone https://github.com/sintefmath/JutulDarcyRun.jl
-cd JutulDarcyRun.jl
+cd JutulDarcyRun.jl/apps/ka
 julia -O3 --threads=8
 ```
 
-Use the package prompt (`]`) to run from your working copy.
-
-```text
-app develop .
-```
-
-### GPU launchers
-
-Start Julia with the same flags from `apps/cuda` or `apps/amdgpu`. At the
-package prompt, point the GPU project at the local runner and install the launcher.
+At the package prompt (`]`), point the app at the shared working copy and
+install the launcher.
 
 ```text
 activate .

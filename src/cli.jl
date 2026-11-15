@@ -1,8 +1,19 @@
 const STANDALONE_PRECONDITIONERS = (:ilu0, :dilu, :jacobi, :spai0)
 const GLOBAL_SMOOTHERS = (:ilu0, :ilu, :dilu, :jacobi, :spai0, :vendor_ilu, :ka_ilu0, :ka_dilu, :ka_spai0)
+const AMG_UPDATE_TYPES = (:memory, :sparsity, :partial_sparsity, :partial_operators, :operators)
+const CPR_UPDATE_INTERVALS = (:once, :iteration, :ministep, :step)
+const CPR_REBUILD_OPTIONS = (:amg_rebuild_tolerance, :update_type, :update_type_partial,
+    :update_interval, :update_interval_partial, :partial_update)
 
-function parse_commandline(argv, command, launcher)
-    gpu = launcher != :cpu
+function parse_commandline(argv, command, mode)
+    gpu = mode in (:ka_cuda, :ka_amd)
+    precond_help = if gpu
+        "Preconditioner (cprw by default, cpr, ilu0, dilu or spai0)"
+    elseif mode == :mpi
+        "Preconditioner (cpr by default, ilu0, dilu, jacobi or spai0)"
+    else
+        "Preconditioner (cprw by default, cpr, ilu0, dilu, jacobi or spai0)"
+    end
     settings = ArgParseSettings(
         prog = command,
         description = "Run a JutulDarcy reservoir simulation and export unified Eclipse results.",
@@ -17,15 +28,10 @@ function parse_commandline(argv, command, launcher)
     end
 
     add_arg_group!(settings, "Linear and nonlinear solvers")
-    if !gpu
+    if mode in (:default, :mpi)
         @add_arg_table! settings begin
-            "--backend"
-                help = "CPU solver backend (ka by default, hypre or cpu for HYPRE, or mpi)"
-                arg_type = Symbol
-                default = :ka
-                range_tester = x -> x in (:ka, :hypre, :cpu, :mpi)
             "--method"
-                help = "Nonlinear method (newton or nldd, which requires hypre, cpu or mpi)"
+                help = "Nonlinear method (newton or nldd)"
                 arg_type = Symbol
                 default = :newton
                 range_tester = x -> x in (:newton, :nldd)
@@ -41,15 +47,41 @@ function parse_commandline(argv, command, launcher)
             help = "Use a Float32 linear solver with FGMRES (true or false, enabled by default on GPU)"
             arg_type = Bool
         "--precond"
-            help = gpu ? "Preconditioner (cprw by default, cpr, ilu0, dilu or spai0)" :
-                "Preconditioner (cprw by default for single-process runs, cpr, ilu0, dilu, jacobi or spai0)"
+            help = precond_help
             arg_type = Symbol
             range_tester = x -> x in (:cprw, :cpr, STANDALONE_PRECONDITIONERS...) && !(gpu && x == :jacobi)
         "--global-smoother"
-            help = gpu ? "CPR full-system smoother (ilu0 by default, dilu, spai0 or vendor_ilu)" :
-                "CPR full-system smoother (ilu0 by default, dilu, jacobi or spai0)"
+            help = gpu ? "CPR full-system smoother (dilu by default, ilu0, spai0 or vendor_ilu)" :
+                "CPR full-system smoother (dilu by default, ilu0, jacobi or spai0)"
             arg_type = Symbol
             range_tester = x -> x in GLOBAL_SMOOTHERS
+        "--amg-rebuild-tolerance"
+            help = "Relative pressure-matrix change needed for a scheduled full KA AMG rebuild (0 always rebuilds)"
+            arg_type = Float64
+            range_tester = x -> x >= 0
+        "--update-type"
+            help = "KA AMG reuse on full updates (memory, sparsity, partial_sparsity, partial_operators or operators)"
+            arg_type = Symbol
+            range_tester = x -> x in AMG_UPDATE_TYPES
+        "--update-type-partial"
+            help = "KA AMG reuse on partial updates (same values as --update-type)"
+            arg_type = Symbol
+            range_tester = x -> x in AMG_UPDATE_TYPES
+        "--update-interval"
+            help = "Schedule for full CPR updates (once, iteration, ministep or step)"
+            arg_type = Symbol
+            range_tester = x -> x in CPR_UPDATE_INTERVALS
+        "--update-interval-partial"
+            help = "Schedule for partial CPR updates (same values as --update-interval)"
+            arg_type = Symbol
+            range_tester = x -> x in CPR_UPDATE_INTERVALS
+        "--partial-update"
+            help = "Allow partial CPR updates between full updates (true or false)"
+            arg_type = Bool
+        "--ka-workgroupsize"
+            help = "KernelAbstractions workgroup size"
+            arg_type = Int
+            range_tester = x -> x > 0
         "--rtol"
             help = "Relative linear solver tolerance"
             arg_type = Float64
@@ -101,7 +133,7 @@ function parse_commandline(argv, command, launcher)
             arg_type = Int
             range_tester = x -> x > 0
         "--timesteps-target-ds"
-            help = "Maximum target saturation change as a fraction (requires hypre or cpu and auto timestepping)"
+            help = "Maximum target saturation change as a fraction (requires jdrun-hypre and auto timestepping)"
             arg_type = Float64
             range_tester = x -> 0 < x <= 1
         "--initial-timestep"
@@ -115,6 +147,14 @@ function parse_commandline(argv, command, launcher)
     end
 
     add_arg_group!(settings, "Input setup")
+    if gpu
+        @add_arg_table! settings begin
+            "--wells-on-device"
+                help = "Merge similar wells and solve them on the GPU (true by default)"
+                arg_type = Bool
+                default = true
+        end
+    end
     @add_arg_table! settings begin
         "--skip-tracers"
             help = "Skip tracer transport in Eclipse .DATA decks"
@@ -164,12 +204,12 @@ function solver_smoother(args, mode)
     gpu = mode in (:ka_cuda, :ka_amd)
     smoother == :vendor_ilu && !gpu && throw(ArgumentError("--global-smoother vendor_ilu requires a GPU launcher"))
     smoother == :jacobi && gpu && throw(ArgumentError("Jacobi is available on CPU backends"))
-    if smoother == :dilu
+    if isnothing(smoother) || smoother == :dilu
         return :ka_dilu
     elseif smoother == :jacobi && mode == :ka
         # KA CPU uses host vectors, but its symbolic smoother factory has no Jacobi entry.
         return JacobiPreconditioner()
-    elseif isnothing(smoother) || smoother == :ilu
+    elseif smoother == :ilu
         return :ilu0
     end
     return smoother
@@ -177,10 +217,8 @@ end
 
 function simulation_kwargs(args, mode)
     method = get(args, :method, :newton)
-    method == :newton || mode in (:default, :mpi) ||
-        throw(ArgumentError("--method nldd requires --backend hypre, cpu or mpi"))
     if !isnothing(args[:timesteps_target_ds])
-        mode == :default || throw(ArgumentError("--timesteps-target-ds requires --backend hypre or cpu"))
+        mode == :default || throw(ArgumentError("--timesteps-target-ds requires jdrun-hypre"))
         something(args[:timesteps], :auto) == :auto ||
             throw(ArgumentError("--timesteps-target-ds requires --timesteps auto"))
     end
@@ -201,7 +239,7 @@ function simulation_kwargs(args, mode)
     )
     for key in (:linear_solver, :precond, :rtol, :tol_cnv, :tol_mb, :tol_dp_well,
             :tol_factor_final_iteration, :relaxation, :max_nonlinear_iterations,
-            :max_timestep_cuts, :presolve_wells, :timesteps)
+            :max_timestep_cuts, :presolve_wells, :timesteps, :ka_workgroupsize)
         value = args[key]
         isnothing(value) || (kwarg[key] = value)
     end
@@ -210,6 +248,9 @@ function simulation_kwargs(args, mode)
     end
     solver = args[:linear_solver]
     gpu = mode in (:ka_cuda, :ka_amd)
+    if gpu
+        kwarg[:wells_on_device] = args[:wells_on_device]
+    end
     if gpu && isnothing(solver)
         kwarg[:linear_solver] = :fgmres
     end
@@ -232,14 +273,15 @@ function simulation_kwargs(args, mode)
     linear_solver_arg = (; smoother_type)
     if mode in (:default, :mpi)
         kwarg[:linear_solver_backend] = :cpu
-        linear_solver_arg = (; smoother_type, amg_type = :hypre)
+        linear_solver_arg = merge(linear_solver_arg, (; amg_type = :hypre))
     end
-    kwarg[:linear_solver_arg] = linear_solver_arg
+    kwarg[:linear_solver_arg] = (; linear_solver_arg...,
+        (key => args[key] for key in CPR_REBUILD_OPTIONS if !isnothing(args[key]))...)
     return kwarg
 end
 
-function run_cli(argv, command, launcher; check_device = nothing)
-    args = parse_commandline(argv, command, launcher)
+function run_cli(argv, command, mode; check_device = nothing, run_case = run_serial_case)
+    args = parse_commandline(argv, command, mode)
     try
         path = abspath(args[:filename])
         isfile(path) || throw(ArgumentError("Input file does not exist: $path"))
@@ -248,25 +290,14 @@ function run_cli(argv, command, launcher; check_device = nothing)
         extension in (".data", ".afi", ".jl") ||
             throw(ArgumentError("Expected a .DATA, .AFI, or .jl input file, got $path"))
 
-        mode = launcher == :cpu ? args[:backend] : launcher
-        mode = mode in (:hypre, :cpu) ? :default : mode
         kwarg = simulation_kwargs(args, mode)
         !args[:skip_tracers] || extension == ".data" ||
             throw(ArgumentError("--skip-tracers applies to Eclipse .DATA input"))
 
         output_dir = args[:output_path]
         output_dir = isnothing(output_dir) ? joinpath(dirname(path), name * "_jutul_output") : abspath(output_dir)
-        if mode == :mpi
-            @eval import PartitionedArrays
-            Base.invokelatest(run_mpi_case, path, extension, output_dir, name, args; kwarg)
-            return 0
-        end
-
         isnothing(check_device) || check_device()
-        case = load_case(path, extension; verbose = args[:verbose], split_wells = kwarg[:method] == :nldd,
-            include_tracers = !args[:skip_tracers])
-        # GPU extensions and Julia scripts can define methods after this call began.
-        Base.invokelatest(run_simulation, case, output_dir, name, mode, args; kwarg)
+        run_case(path, extension, output_dir, name, mode, args; kwarg)
     catch err
         if err isa ArgumentError && !args[:verbose]
             println(stderr, command, ": ", err.msg)
