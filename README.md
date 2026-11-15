@@ -4,7 +4,7 @@ Run JutulDarcy reservoir simulations from the terminal. Requires Julia 1.12 or l
 
 ## Install
 
-Start Julia with `julia -O3 --threads=auto`. Press `]` to open the package prompt.
+Start Julia with `julia -O3 --threads=8`. Press `]` to open the package prompt.
 
 ```text
 app add https://github.com/sintefmath/JutulDarcyRun.jl
@@ -46,11 +46,16 @@ output for single-process runs.
 
 ### Solver options
 
-`--precond cpr` and `--precond cprw` select a two-stage preconditioner. Use
-`--global-smoother` to choose its full-system stage. `--precond ilu0`,
+CPRW is the default for single-process iterative solves on CPU and GPU when
+the model uses grouped CSR blocks without tracer equations. Other block
+layouts and tracer models default to CPR. Models with one unknown per
+reservoir cell default to ILU(0). Use
+`--precond cpr` to select CPR, or use `--global-smoother` to change the
+full-system stage of CPRW or CPR. `--precond ilu0`,
 `--precond dilu`, and `--precond spai0` select standalone smoothers. Jacobi is
 available on CPU, and `--global-smoother vendor_ilu` uses the GPU library's ILU.
-MPI supports `cpr` for pressure preconditioning.
+MPI defaults to CPR for models with a block of multiple mass equations and to
+ILU(0) for other models.
 
 `--linear-solver` selects GMRES, FGMRES, or BiCGSTAB. The GPU launchers use
 Float32 FGMRES by default. Select `--single-precision-linear-solver false` to
@@ -62,11 +67,22 @@ sizes are in days, and timestep cuts can still occur. The saturation-change
 target is a fraction and applies to automatic timestepping with the HYPRE CPU
 backend.
 
-Pass Julia flags before `--` to override the launcher's thread count.
+### Thread count
+
+`jdrun`, `jdrun-cuda`, and `jdrun-amdgpu` start with eight Julia threads.
+To change the count for one run, pass `--threads` before the first `--`.
+Pass the case path and solver options after it. [Julia Pkg app flags](https://pkgdocs.julialang.org/v1/apps/#Runtime-Julia-Flags)
 
 ```sh
-jdrun --threads=8 -- MODEL.DATA --backend ka --global-smoother dilu
+jdrun --threads=4 -- MODEL.DATA --precond cpr
+jdrun-cuda --threads=16 -- MODEL.DATA
+jdrun-amdgpu --threads=auto -- MODEL.DATA
 ```
+
+For a different default in a local checkout, edit `julia_flags` in the
+launcher's `Project.toml` and rerun `app develop .` from that project to
+regenerate the launcher. Use the repository root for `jdrun`, `apps/cuda`
+for `jdrun-cuda`, and `apps/amdgpu` for `jdrun-amdgpu`.
 
 ### MPI
 
@@ -79,6 +95,8 @@ mpiexec -n 4 jdrun MODEL.DATA --backend mpi
 ```
 
 On Windows, use `mpiexec -n 4 cmd.exe /c jdrun MODEL.DATA --backend mpi`.
+Each MPI rank gets eight Julia threads by default. Use `jdrun --threads=2 -- MODEL.DATA --backend mpi`
+in the `mpiexec` command to set the count per rank.
 
 ## Develop locally
 
@@ -87,7 +105,7 @@ Clone the repository and start Julia from its root.
 ```sh
 git clone https://github.com/sintefmath/JutulDarcyRun.jl
 cd JutulDarcyRun.jl
-julia -O3 --threads=auto
+julia -O3 --threads=8
 ```
 
 Use the package prompt (`]`) to run from your working copy.

@@ -81,7 +81,6 @@ function precompile_simulations(mode; strict = true)
         args = parse_commandline(["case.jl", "--info-level", "-1"], "jdrun",
             mode in (:ka, :default) ? :cpu : mode)
         for (physics, thermal) in PRECOMPILE_CASES
-            args[:precond] = physics == :single_phase ? :ilu0 : nothing
             try
                 case = precompile_case(physics, thermal)
                 run_simulation(case, dir, "case", mode, args)

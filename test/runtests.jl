@@ -6,6 +6,28 @@ function options(mode, flags...)
     return JutulDarcyRun.simulation_kwargs(args, mode)
 end
 
+@testset "CPRW default and override" begin
+    for mode in (:ka, :default, :ka_cuda, :ka_amd)
+        @test options(mode)[:precond] == :cprw
+        @test options(mode, "--precond", "cpr")[:precond] == :cpr
+    end
+    @test !haskey(options(:mpi), :precond)
+    @test options(:mpi, "--precond", "cpr")[:precond] == :cpr
+    case = JutulDarcy.setup_mini_wellcase(:immiscible_2ph; nstep = 1)
+    for mode in (:ka, :default)
+        _, config = setup_reservoir_simulator(case; options(mode)...)
+        @test config[:linear_solver].preconditioner.variant == :cprw
+    end
+    single = JutulDarcy.setup_mini_wellcase(:single_phase; nstep = 1, block_backend = true)
+    args = JutulDarcyRun.parse_commandline(["case.jl"], "jdrun", :cpu)
+    @test JutulDarcyRun.case_preconditioner(case, args, :cprw) == :cprw
+    @test JutulDarcyRun.case_preconditioner(single, args, :cprw) == :ilu0
+    tracer = JutulDarcyRun.precompile_case(:deck_tracer, false)
+    @test JutulDarcyRun.case_preconditioner(tracer, args, :cprw) == :cpr
+    csc = JutulDarcy.setup_mini_wellcase(:immiscible_2ph; nstep = 1, backend = :csc)
+    @test JutulDarcyRun.case_preconditioner(csc, args, :cprw) == :cpr
+end
+
 @testset "Standalone preconditioners" begin
     case = JutulDarcy.setup_mini_wellcase(:immiscible_2ph; nstep = 1)
     for mode in (:ka, :default)

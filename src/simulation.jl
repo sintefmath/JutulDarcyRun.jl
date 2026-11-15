@@ -34,13 +34,30 @@ function check_solver_layout(case, mode, args)
     return nothing
 end
 
+function case_preconditioner(case, args, precond)
+    if isnothing(args[:precond]) && precond == :cprw
+        reservoir = JutulDarcy.reservoir_model(case)
+        if degrees_of_freedom_per_entity(reservoir, Cells()) == 1
+            return :ilu0
+        end
+        model = case.model
+        grouped = model isa MultiModel && model.groups isa AbstractVector && maximum(model.groups; init = 0) > 1
+        # The well pressure map uses off-diagonal CSR blocks and assumes no tracer equations.
+        if !grouped || !(reservoir.context isa ParallelCSRContext) || haskey(reservoir.equations, :tracers)
+            return :cpr
+        end
+    end
+    return precond
+end
+
 function run_simulation(case::JutulCase, output_dir, name, mode, args; kwarg = simulation_kwargs(args, mode))
     case = limit_case(case, args[:number_of_steps])
     check_solver_layout(case, mode, args)
+    precond = case_preconditioner(case, args, kwarg[:precond])
     mkpath(output_dir)
     mktempdir(output_dir) do scratch
         native = mkdir(joinpath(scratch, "jutul"))
-        result = simulate_reservoir(case; output_path = native, kwarg...)
+        result = simulate_reservoir(case; output_path = native, kwarg..., precond)
         publish_output(result, case, scratch, output_dir, name, args)
     end
     return nothing

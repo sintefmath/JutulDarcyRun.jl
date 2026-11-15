@@ -41,8 +41,8 @@ function parse_commandline(argv, command, launcher)
             help = "Use a Float32 linear solver with FGMRES (true or false, enabled by default on GPU)"
             arg_type = Bool
         "--precond"
-            help = gpu ? "Preconditioner (cprw, cpr, ilu0, dilu or spai0)" :
-                "Preconditioner (cprw, cpr, ilu0, dilu, jacobi or spai0)"
+            help = gpu ? "Preconditioner (cprw by default, cpr, ilu0, dilu or spai0)" :
+                "Preconditioner (cprw by default for single-process runs, cpr, ilu0, dilu, jacobi or spai0)"
             arg_type = Symbol
             range_tester = x -> x in (:cprw, :cpr, STANDALONE_PRECONDITIONERS...) && !(gpu && x == :jacobi)
         "--global-smoother"
@@ -204,6 +204,9 @@ function simulation_kwargs(args, mode)
             :max_timestep_cuts, :presolve_wells, :timesteps)
         value = args[key]
         isnothing(value) || (kwarg[key] = value)
+    end
+    if mode != :mpi
+        get!(kwarg, :precond, :cprw)
     end
     solver = args[:linear_solver]
     gpu = mode in (:ka_cuda, :ka_amd)
