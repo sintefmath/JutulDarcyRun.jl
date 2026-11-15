@@ -18,6 +18,7 @@ const PRECOMPILE_CASES = (
     (:single_phase, false),
     (:immiscible_2ph, false),
     (:bo_spe1, false),
+    (:deck_spe9, false),
     (:compositional_2ph_3c, false),
     (:geothermal, true),
     (:deck_thermal, true),
@@ -33,12 +34,15 @@ const PRECOMPILE_CASES = (
 function precompile_case(physics, thermal)
     if physics in (:co2brine_immiscible, :co2brine_kvalue, :gas_water)
         return precompile_storage_case(physics, thermal)
+    elseif physics == :deck_spe9
+        deck = JutulDarcy.GeoEnergyIO.test_input_file_path("SPE9", "SPE9.DATA")
     elseif physics in (:deck_thermal, :deck_tracer)
         filename = physics == :deck_thermal ? "HEAT_SMALL.DATA" : "TRACER_SMALL.DATA"
         deck = joinpath(pkgdir(JutulDarcy), "test", "data", "thermal", filename)
-        return load_case(deck, ".data"; verbose = false, split_wells = false)[1:1]
+    else
+        return JutulDarcy.setup_mini_wellcase(physics; nstep = 1, total_time = 60.0, block_backend = true)
     end
-    return JutulDarcy.setup_mini_wellcase(physics; nstep = 1, total_time = 60.0, block_backend = true)
+    return load_case(deck, ".data"; verbose = false, split_wells = false)[1:1]
 end
 
 function precompile_storage_case(physics, thermal)

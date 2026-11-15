@@ -97,9 +97,10 @@ such as energy or tracer transport.
 
 The app precompiles one-step cases for CPU KA and HYPRE, covering single-phase,
 immiscible, black-oil, compositional, geothermal, CO₂/brine, gas/water, and
-Eclipse tracer transport. The workload includes thermal variants and exercises
-native Jutul output followed by the standard export. CUDA and AMDGPU extensions
-run the same workload when their device is functional during precompilation.
+Eclipse tracer transport. The workload includes thermal variants and the first
+report step of SPE9 to cover black-oil capillary pressure. It exercises native
+Jutul output followed by the standard export. CUDA and AMDGPU extensions run
+the same workload when their device is functional during precompilation.
 The MPI workload runs a four-cell, one-step CPR/HYPRE solve through the
 partitioned simulator on a single rank outside an MPI job.
 
