@@ -40,6 +40,7 @@ jdrun MODEL.DATA --backend hypre --number-of-steps 10
 jdrun MODEL.DATA --global-smoother ka_dilu
 jdrun MODEL.DATA --skip-tracers
 jdrun-cuda MODEL.AFI --output-path results
+jdrun-cuda MODEL.DATA --single-precision-linear-solver false
 jdrun-amdgpu case.jl
 jdrun --threads=8 -- MODEL.DATA
 ```
@@ -62,13 +63,18 @@ case = setup_case_from_data_file(joinpath(@__DIR__, "MODEL.DATA"))
 ```
 
 Use `--help` on any command for its solver, tolerance, timestepping, and output
-options. `--initial-timestep` and `--max-timestep` take values in days. Omitted
-solver options use JutulDarcy's defaults, including Eclipse `TUNING` where supported.
+options. `--initial-timestep` and `--max-timestep` take values in days. The
+default timestep settings follow JutulDarcy, including Eclipse `TUNING` where supported.
 `--skip-tracers` disables tracer transport when setting up an Eclipse `.DATA` deck.
-`--global-smoother` (alias `--smoother-type`) selects the full-system smoother.
-For example, `ka_dilu`, `ka_ilu0`, and `ka_spai0` select KA implementations,
-and `vendor_ilu` selects the native GPU implementation on CUDA and AMDGPU.
-`--precond` still selects the preconditioner, such as CPR.
+
+CUDA and AMDGPU default to a Float32 linear solve with FGMRES. Simulation
+state and assembly use Float64. Set `--single-precision-linear-solver false`
+for a Float64 linear solve or `true` to enable the Float32 solve on CPU KA.
+An explicit `--linear-solver gmres` or `bicgstab` defaults to double precision.
+
+DILU is the default full-system smoother for CPR. Use `--global-smoother`
+(alias `--smoother-type`) to select `dilu`, `ka_ilu0`, `ka_spai0`, or the
+native GPU `vendor_ilu`. Use `--precond` to select the preconditioner.
 
 ## MPI
 

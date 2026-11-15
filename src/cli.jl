@@ -32,12 +32,15 @@ function parse_commandline(argv, command, backend)
             help = "Krylov solver (gmres, fgmres or bicgstab)"
             arg_type = Symbol
             range_tester = x -> x in (:gmres, :fgmres, :bicgstab)
+        "--single-precision-linear-solver"
+            help = "Use a Float32 linear solver with FGMRES (true or false, enabled by default on GPU)"
+            arg_type = Bool
         "--precond"
             help = "Preconditioner (cprw, cpr, ilu0, jacobi or spai0)"
             arg_type = Symbol
             range_tester = x -> x in (:cprw, :cpr, :ilu0, :jacobi, :spai0)
         "--global-smoother", "--smoother-type"
-            help = "Full-system smoother, such as ka_dilu, ka_ilu0, ka_spai0 or vendor_ilu (GPU)"
+            help = "Full-system smoother (default dilu, options include ka_ilu0, ka_spai0 and vendor_ilu on GPU)"
             arg_type = Symbol
         "--rtol"
             help = "Relative linear solver tolerance"
@@ -151,6 +154,15 @@ function simulation_kwargs(args, mode)
         value = args[key]
         isnothing(value) || (kwarg[key] = value)
     end
+    solver = get(kwarg, :linear_solver, :fgmres)
+    gpu = mode in (:ka_cuda, :ka_amd)
+    single_precision = something(get(args, :single_precision_linear_solver, nothing), gpu && solver == :fgmres)
+    if single_precision
+        (gpu || mode == :ka) || throw(ArgumentError(
+            "Single precision linear solving requires a KernelAbstractions backend"))
+        solver == :fgmres || throw(ArgumentError("Single precision linear solving requires FGMRES"))
+        kwarg[:single_precision_linear_solver] = true
+    end
     for (key, value, scale) in (
             (:target_its, args[:timesteps_target_iterations], 1),
             (:target_ds, args[:timesteps_target_ds], 1),
@@ -164,6 +176,10 @@ function simulation_kwargs(args, mode)
         linear_solver_arg = (amg_type = :hypre,)
     end
     smoother_type = args[:global_smoother]
+    # The KA-prefixed spelling also selects DILU with HYPRE and MPI.
+    if smoother_type == :dilu || (isnothing(smoother_type) && get(kwarg, :precond, :cpr) in (:cpr, :cprw))
+        smoother_type = :ka_dilu
+    end
     if !isnothing(smoother_type)
         linear_solver_arg = (; linear_solver_arg..., smoother_type)
     end
