@@ -2,14 +2,18 @@ module JutulDarcyRun
 
 using ArgParse
 using FileWatching.Pidfile: mkpidlock
-using Jutul: JutulCase, jutul_message, si_unit
+using Jutul: Cells, JutulCase, degrees_of_freedom_per_entity, jutul_message, si_unit, simulate!
+using Jutul: get_simulator_model
 using JutulDarcy: setup_case_from_afi, setup_case_from_data_file, simulate_reservoir,
-    write_standard_output
-using PrecompileTools: @compile_workload, @setup_workload
+    write_standard_output, setup_reservoir_simulator, ReservoirSimResult
+using PrecompileTools: @compile_workload
 import JutulDarcy
+import MPI
 
 include("cli.jl")
 include("simulation.jl")
+include("mpi.jl")
+include("precompile.jl")
 
 function (@main)(args)
     return run_cli(args, "jdrun", :cpu)
@@ -29,14 +33,11 @@ function (@main)(args)
 end
 end
 
-@setup_workload begin
-    case = JutulDarcy.setup_mini_wellcase(:immiscible_2ph; nstep = 1, total_time = si_unit(:day))
-    @compile_workload begin
-        mktempdir() do dir
-            args = parse_commandline(["case.jl", "--info-level", "-1"], "jdrun", :cpu)
-            run_simulation(case, dir, "case", :ka, args)
-        end
-    end
+@compile_workload begin
+    precompile_simulations(:ka)
+    precompile_simulations(:default)
+    # MPI initialization and collectives must run in the launched MPI job.
+    precompile(run_mpi_case, (String, String, String, String, Dict{Symbol, Any}))
 end
 
 end

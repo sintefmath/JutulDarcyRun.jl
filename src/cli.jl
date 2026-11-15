@@ -16,12 +16,12 @@ function parse_commandline(argv, command, backend)
     if backend == :cpu
         @add_arg_table! settings begin
             "--backend"
-                help = "CPU solver backend (ka or hypre)"
+                help = "CPU solver backend (ka, hypre or mpi)"
                 arg_type = Symbol
                 default = :ka
-                range_tester = x -> x in (:ka, :hypre)
+                range_tester = x -> x in (:ka, :hypre, :mpi)
             "--method"
-                help = "Nonlinear method (newton or nldd, which requires hypre)"
+                help = "Nonlinear method (newton or nldd, which requires hypre or mpi)"
                 arg_type = Symbol
                 default = :newton
                 range_tester = x -> x in (:newton, :nldd)
@@ -94,6 +94,13 @@ function parse_commandline(argv, command, backend)
             range_tester = x -> x > 0
     end
 
+    add_arg_group!(settings, "Input setup")
+    @add_arg_table! settings begin
+        "--skip-tracers"
+            help = "Skip tracer transport in Eclipse .DATA decks"
+            action = :store_true
+    end
+
     add_arg_group!(settings, "Output and printing")
     @add_arg_table! settings begin
         "--output-path"
@@ -142,7 +149,7 @@ function simulation_kwargs(args, mode)
             (:max_dt, args[:max_timestep], si_unit(:day)))
         isnothing(value) || (kwarg[key] = value * scale)
     end
-    if mode == :default
+    if mode in (:default, :mpi)
         kwarg[:linear_solver_backend] = :cpu
         kwarg[:linear_solver_arg] = (amg_type = :hypre,)
     end
@@ -159,17 +166,28 @@ function run_cli(argv, command, backend)
         extension in (".data", ".afi", ".jl") ||
             throw(ArgumentError("Expected a .DATA, .AFI, or .jl input file, got $path"))
 
-        mode = backend == :cpu ? (args[:backend] == :hypre ? :default : :ka) : backend
+        mode = backend == :cpu ? args[:backend] : backend
+        mode = mode == :hypre ? :default : mode
         method = get(args, :method, :newton)
-        method == :newton || mode == :default ||
-            throw(ArgumentError("--method nldd requires --backend hypre"))
+        method == :newton || mode in (:default, :mpi) ||
+            throw(ArgumentError("--method nldd requires --backend hypre or --backend mpi"))
         isnothing(args[:timesteps_target_ds]) || mode == :default ||
             throw(ArgumentError("--timesteps-target-ds requires --backend hypre"))
-        require_backend(mode)
+        !args[:skip_tracers] || extension == ".data" ||
+            throw(ArgumentError("--skip-tracers applies to Eclipse .DATA input"))
 
         output_dir = args[:output_path]
         output_dir = isnothing(output_dir) ? joinpath(dirname(path), name * "_jutul_output") : abspath(output_dir)
-        case = load_case(path, extension; verbose = args[:verbose], split_wells = method == :nldd)
+        if mode == :mpi
+            args[:output_substates] && throw(ArgumentError("MPI output supports report steps only"))
+            @eval import PartitionedArrays
+            Base.invokelatest(run_mpi_case, path, extension, output_dir, name, args)
+            return 0
+        end
+
+        require_backend(mode)
+        case = load_case(path, extension; verbose = args[:verbose], split_wells = method == :nldd,
+            include_tracers = !args[:skip_tracers])
         # GPU extensions and Julia scripts can define methods after this call began.
         Base.invokelatest(run_simulation, case, output_dir, name, mode, args)
     catch err

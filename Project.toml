@@ -10,6 +10,8 @@ CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 FileWatching = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
 Jutul = "2b460a1a-8a2b-45b2-b125-b5c536396eb9"
 JutulDarcy = "82210473-ab04-4dce-b31b-11573c4f8e0a"
+MPI = "da04e1cc-30fd-572f-bb4f-1f8673147195"
+PartitionedArrays = "5a9dfac6-5c52-46f7-8278-5e2210713be9"
 PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 
 [sources]
@@ -23,8 +25,15 @@ CUDA = "6.5"
 FileWatching = "1"
 Jutul = "0.5.9"
 JutulDarcy = "0.4.1"
+MPI = "0.20"
+PartitionedArrays = "0.5"
 PrecompileTools = "1"
 julia = "1.12"
+
+[extensions]
+# Load the solver extensions before the app's GPU workloads run.
+JutulDarcyRunAMDGPUExt = ["AMDGPU", "Jutul", "JutulDarcy"]
+JutulDarcyRunCUDAExt = ["CUDA", "Jutul", "JutulDarcy"]
 
 [apps]
 jdrun = {julia_flags = ["-O3", "--threads=auto"]}

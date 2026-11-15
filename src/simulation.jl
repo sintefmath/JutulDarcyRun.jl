@@ -11,9 +11,9 @@ function require_backend(mode)
     return nothing
 end
 
-function load_case(path, extension; verbose, split_wells)
+function load_case(path, extension; verbose, split_wells, include_tracers = true)
     if extension == ".data"
-        case = setup_case_from_data_file(path; verbose, split_wells, parse_arg = (; verbose))
+        case = setup_case_from_data_file(path; verbose, split_wells, include_tracers, parse_arg = (; verbose))
     elseif extension == ".afi"
         case = setup_case_from_afi(path; verbose, split_wells)
     else
@@ -27,34 +27,42 @@ function load_case(path, extension; verbose, split_wells)
     return case
 end
 
-function run_simulation(case::JutulCase, output_dir, name, mode, args)
+function limit_case(case::JutulCase, limit)
     isempty(case.dt) && throw(ArgumentError("The case has no report steps"))
-    limit = args[:number_of_steps]
     if !isnothing(limit) && limit < length(case.dt)
         case = case[1:limit]
     end
+    return case
+end
+
+function run_simulation(case::JutulCase, output_dir, name, mode, args)
+    case = limit_case(case, args[:number_of_steps])
     kwarg = simulation_kwargs(args, mode)
     mkpath(output_dir)
     mktempdir(output_dir) do scratch
         native = mkdir(joinpath(scratch, "jutul"))
         result = simulate_reservoir(case; output_path = native, kwarg...)
-        standard = mkdir(joinpath(scratch, "standard"))
-        # Jutul reads the completed report steps back from its native files.
-        # Write a complete set of standard files before replacing any previous output.
-        write_standard_output(result, case, joinpath(standard, "CASE"); unified = true)
-        files = [(joinpath(standard, file), joinpath(output_dir, name * splitext(file)[2]))
-            for file in readdir(standard)]
-        mkpidlock(joinpath(output_dir, ".jdrun.lock"); stale_age = 60) do
-            for (_, path) in files
-                isdir(path) && throw(ArgumentError("Output file path is a directory: $path"))
-            end
-            for (source, path) in files
-                Base.Filesystem.rename(source, path)
-            end
+        publish_output(result, case, scratch, output_dir, name, args)
+    end
+    return nothing
+end
+
+function publish_output(result, case, scratch, output_dir, name, args)
+    standard = mkdir(joinpath(scratch, "standard"))
+    # Write a complete set of standard files before replacing any previous output.
+    write_standard_output(result, case, joinpath(standard, "CASE"); unified = true)
+    files = [(joinpath(standard, file), joinpath(output_dir, name * splitext(file)[2]))
+        for file in readdir(standard)]
+    mkpidlock(joinpath(output_dir, ".jdrun.lock"); stale_age = 60) do
+        for (_, path) in files
+            isdir(path) && throw(ArgumentError("Output file path is a directory: $path"))
         end
-        if args[:print_wells]
-            result.wells()
+        for (source, path) in files
+            Base.Filesystem.rename(source, path)
         end
+    end
+    if args[:print_wells]
+        result.wells()
     end
     if args[:info_level] >= 0
         jutul_message("Output", "Wrote unified Eclipse output to $output_dir")

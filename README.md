@@ -20,6 +20,7 @@ See the [Pkg apps documentation](https://pkgdocs.julialang.org/v1/apps/) for mor
 ```text
 jdrun MODEL.DATA
 jdrun MODEL.DATA --backend hypre --number-of-steps 10
+jdrun MODEL.DATA --skip-tracers
 jdrun-cuda MODEL.AFI --output-path results
 jdrun-amdgpu case.jl
 jdrun --threads=8 -- MODEL.DATA
@@ -44,6 +45,40 @@ case = setup_case_from_data_file(joinpath(@__DIR__, "MODEL.DATA"))
 Use `--help` on any command for its solver, tolerance, timestepping, and output
 options. `--initial-timestep` and `--max-timestep` take values in days. Omitted
 solver options use JutulDarcy's defaults, including Eclipse `TUNING` where supported.
+`--skip-tracers` disables tracer transport when setting up an Eclipse `.DATA` deck.
+
+## MPI
+
+Use the `mpiexec` for the MPI implementation configured in the app's Julia
+environment. Input and output paths must be accessible to all ranks. See the
+[MPI.jl configuration guide](https://juliaparallel.org/MPI.jl/stable/configuration/).
+
+```sh
+mpiexec -n 4 jdrun MODEL.DATA --backend mpi --output-path results
+```
+
+On Windows, launch the Pkg-generated batch file through `cmd.exe`.
+
+```powershell
+mpiexec -n 4 cmd.exe /c jdrun MODEL.DATA --backend mpi --output-path results
+```
+
+Each rank loads the input and runs its part of the solve. For `.jl` inputs,
+construct `case` with `split_wells = true` in the model setup on every rank.
+Rank zero writes the unified Eclipse files after Jutul consolidates the
+distributed report steps. MPI defaults to CPR for multiphase mass-only
+systems and to ILU(0) for scalar systems or systems with extra equations,
+such as energy or tracer transport.
+
+## Precompilation
+
+The app precompiles one-step cases for CPU KA and HYPRE, covering single-phase,
+immiscible, black-oil, compositional, geothermal, CO₂/brine, gas/water, and
+Eclipse tracer transport. The workload includes thermal variants and exercises
+native Jutul output followed by the standard export. CUDA and AMDGPU extensions
+run the same workload when their device is functional during precompilation.
+The MPI entry point is precompiled. Rank initialization and distributed
+solves run inside `mpiexec`.
 
 ## Output
 
