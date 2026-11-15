@@ -39,8 +39,8 @@ function parse_commandline(argv, command, backend)
             help = "Preconditioner (cprw, cpr, ilu0, jacobi or spai0)"
             arg_type = Symbol
             range_tester = x -> x in (:cprw, :cpr, :ilu0, :jacobi, :spai0)
-        "--global-smoother", "--smoother-type"
-            help = "Full-system smoother (default dilu, options include ka_ilu0, ka_spai0 and vendor_ilu on GPU)"
+        "--global-smoother"
+            help = "Full-system smoother (default ilu0, options include dilu, spai0 and vendor_ilu on GPU)"
             arg_type = Symbol
         "--rtol"
             help = "Relative linear solver tolerance"
@@ -176,8 +176,10 @@ function simulation_kwargs(args, mode)
         linear_solver_arg = (amg_type = :hypre,)
     end
     smoother_type = args[:global_smoother]
-    # The KA-prefixed spelling also selects DILU with HYPRE and MPI.
-    if smoother_type == :dilu || (isnothing(smoother_type) && get(kwarg, :precond, :cpr) in (:cpr, :cprw))
+    if smoother_type == :ilu || (isnothing(smoother_type) && get(kwarg, :precond, :cpr) in (:cpr, :cprw))
+        smoother_type = :ilu0
+    elseif smoother_type == :dilu
+        # The KA-prefixed spelling also selects DILU with HYPRE and MPI.
         smoother_type = :ka_dilu
     end
     if !isnothing(smoother_type)

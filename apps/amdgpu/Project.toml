@@ -9,7 +9,7 @@ JutulDarcy = "82210473-ab04-4dce-b31b-11573c4f8e0a"
 JutulDarcyRun = "92126991-471c-469f-893d-79b88a764fcc"
 
 [sources]
-JutulDarcyRun = {path = "../.."}
+JutulDarcyRun = {url = "https://github.com/sintefmath/JutulDarcyRun.jl.git"}
 
 [compat]
 AMDGPU = "2.11"

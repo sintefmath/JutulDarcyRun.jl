@@ -1,131 +1,81 @@
 # JutulDarcyRun.jl
 
-Run JutulDarcy reservoir simulations from the terminal with Julia 1.12 or later.
+Run JutulDarcy reservoir simulations from the terminal. Requires Julia 1.12 or later.
 
 ## Install
 
-From a local checkout, install the CPU app with the same optimization level
-the launcher uses so Julia can reuse the install-time cache on the first run.
-
-```sh
-julia -O3 --threads=auto -e 'using Pkg; Pkg.Apps.develop(path=ARGS[1])' /path/to/JutulDarcyRun.jl
-```
-
-For a committed CPU checkout, start Julia with `julia -O3 --threads=auto` and
-use `app add /path/to/JutulDarcyRun.jl` at the package prompt (`]`).
-
-Install the GPU apps from their own projects in the checkout. Each project
-adds its own GPU dependencies to the shared simulation code.
-
-```sh
-julia -O3 --threads=auto -e 'using Pkg; Pkg.Apps.develop(path=ARGS[1])' /path/to/JutulDarcyRun.jl/apps/cuda
-julia -O3 --threads=auto -e 'using Pkg; Pkg.Apps.develop(path=ARGS[1])' /path/to/JutulDarcyRun.jl/apps/amdgpu
-```
-
-If the checkout's manifest still tracks a Git revision of JutulDarcy, activate
-the checkout and run `free JutulDarcy` at the package prompt to switch to the
-registered release. When upgrading an installation that previously provided all
-three commands, reinstall `jdrun` to refresh the registered launchers, then
-install the GPU commands you use.
-
-Add the `bin` subdirectory of your first Julia depot to `PATH`. With the default
-depot, this is `~/.julia/bin` on Linux and macOS or `%USERPROFILE%\.julia\bin` on Windows.
-See the [Pkg apps documentation](https://pkgdocs.julialang.org/v1/apps/) for more installation options.
-
-## Run
+Start Julia with `julia -O3 --threads=auto`. Press `]` to open the package prompt.
 
 ```text
-jdrun MODEL.DATA
-jdrun MODEL.DATA --backend hypre --number-of-steps 10
-jdrun MODEL.DATA --global-smoother ka_dilu
-jdrun MODEL.DATA --skip-tracers
-jdrun-cuda MODEL.AFI --output-path results
-jdrun-cuda MODEL.DATA --single-precision-linear-solver false
-jdrun-amdgpu case.jl
-jdrun --threads=8 -- MODEL.DATA
+app add https://github.com/sintefmath/JutulDarcyRun.jl
 ```
 
-`jdrun` uses KernelAbstractions on the CPU by default. `--backend hypre` selects
-the CPU solver with HYPRE for the CPR pressure solve. The GPU commands require a
-functional CUDA or ROCm device at runtime. All three commands can be installed
-on a CPU-only machine and start Julia with `-O3 --threads=auto` by default.
-CUDA and AMDGPU are dependencies of their respective launchers.
-
-Each command accepts Eclipse `.DATA` decks, `.AFI` files with RESQML grids, and
-Julia `.jl` scripts. A script runs in Julia's main workspace and
-must define a top-level `case::JutulCase`. This example builds a case from a
-deck next to the script.
+For a GPU launcher, press Backspace at an empty package prompt and choose
+the install command for your GPU.
 
 ```julia
-using JutulDarcy
-
-case = setup_case_from_data_file(joinpath(@__DIR__, "MODEL.DATA"))
+using Pkg
+Pkg.Apps.add(url="https://github.com/sintefmath/JutulDarcyRun.jl.git", subdir="apps/cuda")
+Pkg.Apps.add(url="https://github.com/sintefmath/JutulDarcyRun.jl.git", subdir="apps/amdgpu")
 ```
 
-Use `--help` on any command for its solver, tolerance, timestepping, and output
-options. `--initial-timestep` and `--max-timestep` take values in days. The
-default timestep settings follow JutulDarcy, including Eclipse `TUNING` where supported.
-`--skip-tracers` disables tracer transport when setting up an Eclipse `.DATA` deck.
+Add the `bin` directory of your first Julia depot to `PATH`. The default is
+`~/.julia/bin` on Linux and macOS and `%USERPROFILE%\.julia\bin` on Windows.
 
-CUDA and AMDGPU default to a Float32 linear solve with FGMRES. Simulation
-state and assembly use Float64. Set `--single-precision-linear-solver false`
-for a Float64 linear solve or `true` to enable the Float32 solve on CPU KA.
-An explicit `--linear-solver gmres` or `bicgstab` defaults to double precision.
+## Run a case
 
-DILU is the default full-system smoother for CPR. Use `--global-smoother`
-(alias `--smoother-type`) to select `dilu`, `ka_ilu0`, `ka_spai0`, or the
-native GPU `vendor_ilu`. Use `--precond` to select the preconditioner.
-
-## MPI
-
-Use the `mpiexec` for the MPI implementation configured in the app's Julia
-environment. Input and output paths must be accessible to all ranks. See the
-[MPI.jl configuration guide](https://juliaparallel.org/MPI.jl/stable/configuration/).
+From the terminal, run
 
 ```sh
-mpiexec -n 4 jdrun MODEL.DATA --backend mpi --output-path results
+jdrun MODEL.DATA
+jdrun MODEL.DATA --number-of-steps 1 --output-path results
+jdrun --help
 ```
 
-On Windows, launch the Pkg-generated batch file through `cmd.exe`.
+Inputs can be Eclipse `.DATA` decks, `.AFI` files, or Julia scripts that define a
+top-level `case::JutulCase`. The CPU app uses KernelAbstractions by default.
+Use `--backend hypre` for HYPRE. For GPU runs, use `jdrun-cuda` or `jdrun-amdgpu`
+with a working CUDA or ROCm setup.
 
-```powershell
-mpiexec -n 4 cmd.exe /c jdrun MODEL.DATA --backend mpi --output-path results
+Results go in `<case>_jutul_output` next to the input. The Eclipse output includes
+the grid (`.EGRID`), report-step states (`.UNRST`), and summary (`.SMSPEC` and
+`.UNSMRY`). Add `--vtk` for ParaView files or `--csv` for summary time series.
+
+### MPI
+
+Use the `mpiexec` that matches your MPI.jl setup. All ranks need access to the input
+and output paths. For Julia case scripts, set `split_wells = true` when building
+the model. [MPI.jl configuration](https://juliaparallel.org/MPI.jl/stable/configuration/)
+
+```sh
+mpiexec -n 4 jdrun MODEL.DATA --backend mpi
 ```
 
-Each rank loads the input and runs its part of the solve. For `.jl` inputs,
-construct `case` with `split_wells = true` in the model setup on every rank.
-Rank zero writes the unified Eclipse files after Jutul consolidates the
-distributed report steps. MPI defaults to CPR for multiphase mass-only
-systems and to ILU(0) for scalar systems or systems with extra equations,
-such as energy or tracer transport.
+On Windows, use `mpiexec -n 4 cmd.exe /c jdrun MODEL.DATA --backend mpi`.
 
-## Precompilation
+## Develop locally
 
-The app precompiles one-step cases for CPU KA and HYPRE, covering single-phase,
-immiscible, black-oil, compositional, geothermal, CO₂/brine, gas/water, and
-Eclipse tracer transport. The workload includes thermal variants and the first
-report step of SPE9 to cover black-oil capillary pressure. It exercises native
-Jutul output followed by the standard export. CUDA and AMDGPU extensions run
-the same workload when their device is functional during precompilation.
-The MPI workload runs a four-cell, one-step CPR/HYPRE solve through the
-partitioned simulator on a single rank outside an MPI job.
+Clone the repository and start Julia from its root.
 
-## Output
+```sh
+git clone https://github.com/sintefmath/JutulDarcyRun.jl
+cd JutulDarcyRun.jl
+julia -O3 --threads=auto
+```
 
-The default output directory is `<case>_jutul_output` next to the input file.
-Jutul writes native report steps to temporary files during the run. After a
-successful solve, JutulDarcy's `StandardOutput` consolidates them into
-`<case>.SMSPEC`, `<case>.UNSMRY`, `<case>.UNRST`, and `<case>.EGRID`.
-Subsequent runs replace the standard files for the same case. The writer uses
-deck grid data when present and a synthetic grid for cases without it.
+Use the package prompt (`]`) to run from your working copy.
 
 ```text
-jdrun MODEL.DATA --vtk --csv
+app develop .
 ```
 
-`--vtk` writes `<case>.pvd` and a `.vtu` file per saved reservoir state using
-the simulation mesh. Open the `.pvd` file in ParaView to browse the states by
-step number. `--csv` writes `<case>.csv` with field, well, and group summary
-values in SI units. Each row contains the elapsed time in seconds, scope, name,
-summary keyword, and value. With MPI, rank zero writes both optional exports
-after consolidation.
+### GPU launchers
+
+Start Julia with the same flags from `apps/cuda` or `apps/amdgpu`. At the
+package prompt, point the GPU project at the local runner and install the launcher.
+
+```text
+activate .
+develop ../..
+app develop .
+```
