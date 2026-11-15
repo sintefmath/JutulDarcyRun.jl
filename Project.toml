@@ -7,12 +7,15 @@ version = "0.1.0"
 AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
 ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+DelimitedFiles = "8bb1440f-4735-579b-a4ab-409b98df4dab"
 FileWatching = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
+HYPRE = "b5ffcf37-a2bd-41ab-a3da-4bd9bc8ad771"
 Jutul = "2b460a1a-8a2b-45b2-b125-b5c536396eb9"
 JutulDarcy = "82210473-ab04-4dce-b31b-11573c4f8e0a"
 MPI = "da04e1cc-30fd-572f-bb4f-1f8673147195"
 PartitionedArrays = "5a9dfac6-5c52-46f7-8278-5e2210713be9"
 PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
+WriteVTK = "64499a7a-5c06-52f2-abe2-ccb03c286192"
 
 [sources]
 # Use a revision with write_standard_output until it is available in a release.
@@ -22,18 +25,22 @@ JutulDarcy = {url = "https://github.com/sintefmath/JutulDarcy.jl.git", rev = "a2
 AMDGPU = "2.11"
 ArgParse = "1.2"
 CUDA = "6.5"
+DelimitedFiles = "1"
 FileWatching = "1"
+HYPRE = "1"
 Jutul = "0.5.9"
 JutulDarcy = "0.4.1"
 MPI = "0.20"
 PartitionedArrays = "0.5"
 PrecompileTools = "1"
+WriteVTK = "1"
 julia = "1.12"
 
 [extensions]
-# Load the solver extensions before the app's GPU workloads run.
+# Load the solver extensions before the app's backend workloads run.
 JutulDarcyRunAMDGPUExt = ["AMDGPU", "Jutul", "JutulDarcy"]
 JutulDarcyRunCUDAExt = ["CUDA", "Jutul", "JutulDarcy"]
+JutulDarcyRunMPIExt = ["MPI", "PartitionedArrays", "HYPRE", "Jutul", "JutulDarcy"]
 
 [apps]
 jdrun = {julia_flags = ["-O3", "--threads=auto"]}

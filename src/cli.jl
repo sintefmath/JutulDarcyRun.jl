@@ -36,6 +36,9 @@ function parse_commandline(argv, command, backend)
             help = "Preconditioner (cprw, cpr, ilu0, jacobi or spai0)"
             arg_type = Symbol
             range_tester = x -> x in (:cprw, :cpr, :ilu0, :jacobi, :spai0)
+        "--global-smoother", "--smoother-type"
+            help = "Full-system smoother, such as ka_dilu, ka_ilu0, ka_spai0 or vendor_ilu (GPU)"
+            arg_type = Symbol
         "--rtol"
             help = "Relative linear solver tolerance"
             arg_type = Float64
@@ -105,6 +108,12 @@ function parse_commandline(argv, command, backend)
     @add_arg_table! settings begin
         "--output-path"
             help = "Output directory (defaults to <case>_jutul_output next to the input file)"
+        "--vtk"
+            help = "Also export reservoir states as a ParaView VTK time series"
+            action = :store_true
+        "--csv"
+            help = "Also export field, well and group summary time series as CSV in SI units"
+            action = :store_true
         "--output-substates"
             help = "Include internal timesteps in the Jutul results and summary"
             action = :store_true
@@ -149,10 +158,16 @@ function simulation_kwargs(args, mode)
             (:max_dt, args[:max_timestep], si_unit(:day)))
         isnothing(value) || (kwarg[key] = value * scale)
     end
+    linear_solver_arg = (;)
     if mode in (:default, :mpi)
         kwarg[:linear_solver_backend] = :cpu
-        kwarg[:linear_solver_arg] = (amg_type = :hypre,)
+        linear_solver_arg = (amg_type = :hypre,)
     end
+    smoother_type = args[:global_smoother]
+    if !isnothing(smoother_type)
+        linear_solver_arg = (; linear_solver_arg..., smoother_type)
+    end
+    isempty(linear_solver_arg) || (kwarg[:linear_solver_arg] = linear_solver_arg)
     return kwarg
 end
 

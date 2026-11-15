@@ -4,6 +4,16 @@ using JutulDarcy: get_1d_reservoir, setup_well, setup_reservoir_model,
     BottomHolePressureTarget
 using JutulDarcy.MultiComponentFlash: GenericCubicEOS, MultiComponentMixture, SoreideWhitson
 
+function can_run_mpi_precompile()
+    MPI.Finalized() && return false
+    MPI.Initialized() && return MPI.Comm_size(MPI.COMM_WORLD) == 1
+    # An uninitialized compiler worker can inherit a rank's launcher environment.
+    return !any(key -> haskey(ENV, key), (
+        "OMPI_COMM_WORLD_RANK", "PMI_RANK", "PMIX_RANK", "MPI_LOCALRANKID",
+        "MV2_COMM_WORLD_RANK", "SLURM_PROCID",
+    ))
+end
+
 const PRECOMPILE_CASES = (
     (:single_phase, false),
     (:immiscible_2ph, false),
