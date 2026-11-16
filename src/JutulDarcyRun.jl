@@ -18,6 +18,7 @@ include("cli.jl")
 include("logging.jl")
 include("simulation.jl")
 include("restart_wells.jl")
+include("output.jl")
 include("precompile.jl")
 
 end

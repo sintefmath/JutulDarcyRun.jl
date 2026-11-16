@@ -19,7 +19,27 @@ function tee_run_stream(pipe, terminal, log)
     return nothing
 end
 
-function with_run_log(run, output_dir, name, input)
+function print_run_header(io)
+    print(io, """
+
+       █████             █████               ████  ██████████
+      ░░███             ░░███               ░░███ ░░███░░░░███
+       ░███  █████ ████ ███████   █████ ████ ░███  ░███   ░░███  ██████   ████████   ██████  █████ ████
+       ░███ ░░███ ░███ ░░░███░   ░░███ ░███  ░███  ░███    ░███ ░░░░░███ ░░███░░███ ███░░███░░███ ░███
+       ░███  ░███ ░███   ░███     ░███ ░███  ░███  ░███    ░███  ███████  ░███ ░░░ ░███ ░░░  ░███ ░███
+ ███   ░███  ░███ ░███   ░███ ███ ░███ ░███  ░███  ░███    ███  ███░░███  ░███     ░███  ███ ░███ ░███
+░░████████   ░░████████  ░░█████  ░░████████ █████ ██████████  ░░████████ █████    ░░██████  ░░███████
+ ░░░░░░░░     ░░░░░░░░    ░░░░░    ░░░░░░░░ ░░░░░ ░░░░░░░░░░    ░░░░░░░░ ░░░░░      ░░░░░░    ░░░░░███
+                                                                                              ███ ░███
+    https://github.com/sintefmath/JutulDarcy.jl                                              ░░██████
+                                                                                              ░░░░░░
+    https://sintefmath.github.io/JutulDarcy.jl/stable/
+    https://github.com/sintefmath/JutulDarcyRun.jl
+
+""")
+end
+
+function with_run_log(run, output_dir, name, input; header = false)
     mkpath(output_dir)
     path = joinpath(output_dir, name * ".DBG")
     return mkpidlock(path * ".lock"; stale_age = 60) do
@@ -36,6 +56,7 @@ function with_run_log(run, output_dir, name, input)
                 result = try
                     redirect_stdio(; stdout = out, stderr = err) do
                         try
+                            header && print_run_header(stdout)
                             run()
                         finally
                             Base.Libc.flush_cstdio()

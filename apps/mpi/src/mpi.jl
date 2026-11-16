@@ -10,7 +10,7 @@ function run_mpi_case(path, extension, output_dir, name, _mode, args; kwarg)
     end
     try
         if rank == 0
-            with_run_log(run_rank, output_dir, name, path)
+            with_run_log(run_rank, output_dir, name, path; header = args[:header])
         else
             run_rank()
         end

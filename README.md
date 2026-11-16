@@ -37,9 +37,14 @@ Results go in `<case>_jutul_output` next to the input. The Eclipse output includ
 the grid (`.EGRID`), report-step states and well completions for plotting
 (`.UNRST`), and summary (`.SMSPEC` and `.UNSMRY`). The live `<case>.DBG` log
 captures terminal output. For MPI, it records rank 0. Add `--vtk` for ParaView
-files or `--csv` for summary time series.
-`--output-substates` includes internal timesteps in the summary, CSV, and VTK
-output for single-process runs.
+files. `--output-substates` includes internal timesteps in restart, summary, CSV,
+and VTK output for single-process runs. Use `--header false` to hide the startup logo
+and links.
+
+`--csv` writes SI-unit tables to `CSV/` in the output directory. `FIELD.csv` has
+one column per field quantity, and files such as `WBHP.csv` have one column per
+well. Group data goes in `GROUP.csv` when available. Each row starts with elapsed
+time in seconds. A rerun with `--csv` replaces the `CSV/` directory.
 
 ### Solver options
 

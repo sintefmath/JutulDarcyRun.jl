@@ -11,11 +11,21 @@ end
     help = sprint(io -> app.ArgParse.show_help(io, settings; exit_when_done = false))
     words = join(split(help), " ")
     @test startswith(words, "usage: jdrun-ka [options] filename")
+    @test occursin("--update-type {memory,sparsity,partial_sparsity,partial_operators,operators}", words)
+    @test occursin("--update-type-partial {memory,sparsity,partial_sparsity,partial_operators,operators}", words)
+    @test occursin("--update-interval {once,iteration,ministep,step}", words)
+    @test occursin("--update-interval-partial {once,iteration,ministep,step}", words)
+    @test occursin("--partial-update {true,false}", words)
+    @test occursin("Default is dilu.", words)
     @test occursin("Default is 0.05.", words)
     @test occursin("Defaults to partial_sparsity with zero rebuild tolerance and memory otherwise.", words)
     @test occursin("type: Float64, default: 1.0", words)
+    cuda_settings = app.commandline_settings("jdrun-cuda", :ka_cuda)
+    cuda_help = sprint(io -> app.ArgParse.show_help(io, cuda_settings; exit_when_done = false))
+    @test occursin("default: :fgmres", join(split(cuda_help), " "))
     for mode in (:ka, :default, :mpi, :ka_cuda, :ka_amd)
         args = app.parse_commandline(["case.jl"], "jdrun-ka", mode)
+        @test args[:header] === true
         @test args[:info_level] === 1.0
         @test args[:amg_rebuild_tolerance] === nothing
         @test options(mode, "--info-level", "0.5")[:info_level] === 0.5
@@ -185,11 +195,53 @@ end
     end
 end
 
+@testset "Substates in restart and VTK output" begin
+    app = JutulDarcyRun
+    mid = Dict{Symbol, Any}(:Pressure => fill(10.0, 4))
+    final = Dict{Symbol, Any}(:Pressure => fill(20.0, 4))
+    states = [Dict{Symbol, Any}(:Reservoir => final, :substates => [Dict{Symbol, Any}(:Reservoir => mid)])]
+    reports = [(ministeps = [(success = true, dt = 4.0), (success = false, dt = 8.0), (success = true, dt = 6.0)],)]
+    raw = Jutul.SimResult(states, reports, Jutul.now())
+    time = [4.0, 10.0]
+    wells = JutulDarcy.WellResults(time, Dict{Symbol, AbstractDict}())
+    result = JutulDarcy.ReservoirSimResult(wells, [mid, final], Dict(), time, raw, Dict())
+    expanded = app.restart_at_output_times(result)
+    @test Jutul.report_times(expanded.result.reports) == time
+    @test [state[:Reservoir] for state in expanded.result.states] == [mid, final]
+    @test haskey(only(result.result.states), :substates)
+
+    case = JutulDarcy.setup_mini_wellcase(:single_phase; dims = (4, 1, 1), nstep = 1)
+    mktempdir() do dir
+        paths = app.write_vtk_output(result, case, dir, "case")
+        @test count(path -> endswith(path, ".vtu") && isfile(path), paths) == 2
+        collection = read(joinpath(dir, "case.pvd"), String)
+        @test parse.(Float64, [m[1] for m in eachmatch(r"timestep=\"([^\"]+)\"", collection)]) == time
+    end
+end
+
+@testset "Wide CSV summary tables" begin
+    values = Dict(
+        "FIELD" => Dict("FPR" => [10.0, 11.0], "FOPT" => [0.0, 1.0]),
+        "WELLS" => Dict("P2" => Dict("WBHP" => [3.0, 4.0]),
+            "P1" => Dict("WBHP" => [1.0, 2.0], "WOPR" => [0.5, 0.75])),
+        "GROUP" => Dict("G1" => Dict("GOPT" => [0.0, 1.0])),
+    )
+    result = (summary = Dict("VALUES" => values), time = [4.0, 10.0])
+    mktempdir() do dir
+        JutulDarcyRun.write_summary_csv(result, dir)
+        @test readdir(dir) == ["FIELD.csv", "GROUP.csv", "WBHP.csv", "WOPR.csv"]
+        @test readlines(joinpath(dir, "FIELD.csv")) == ["time_seconds,FOPT,FPR", "4.0,0.0,10.0", "10.0,1.0,11.0"]
+        @test readlines(joinpath(dir, "WBHP.csv")) == ["time_seconds,P1,P2", "4.0,1.0,3.0", "10.0,2.0,4.0"]
+        @test readlines(joinpath(dir, "WOPR.csv")) == ["time_seconds,P1,P2", "4.0,0.5,", "10.0,0.75,"]
+        @test first(readlines(joinpath(dir, "GROUP.csv"))) == "time_seconds,GOPT:G1"
+    end
+end
+
 @testset "Run log" begin
     mktempdir() do dir
         terminal = joinpath(dir, "terminal.txt")
         redirect_stdio(; stdout = terminal, stderr = terminal) do
-            JutulDarcyRun.with_run_log(dir, "case", "input.DATA") do
+            JutulDarcyRun.with_run_log(dir, "case", "input.DATA"; header = true) do
                 println("Report step 1")
                 println(stderr, "Case diagnostic")
             end
@@ -204,7 +256,14 @@ end
             @test occursin(message, output)
         end
         @test occursin("Run complete", log)
-        @test occursin("Invalid input", read(joinpath(dir, "failed.DBG"), String))
+        @test occursin("█████", log)
+        @test occursin("█████", output)
+        @test occursin("https://github.com/sintefmath/JutulDarcy.jl", log)
+        @test occursin("https://sintefmath.github.io/JutulDarcy.jl/stable/", log)
+        @test occursin("https://github.com/sintefmath/JutulDarcyRun.jl", log)
+        failed = read(joinpath(dir, "failed.DBG"), String)
+        @test occursin("Invalid input", failed)
+        @test !occursin("█████", failed)
     end
 end
 
