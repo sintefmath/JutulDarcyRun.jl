@@ -16,6 +16,7 @@ include("mpi.jl")
 function (@main)(args)
     return run_cli(args, "jdrun-mpi", :mpi; run_case = run_mpi_case)
 end
+julia_main()::Cint = main(ARGS)
 
 function can_run_mpi_precompile()
     MPI.Finalized() && return false

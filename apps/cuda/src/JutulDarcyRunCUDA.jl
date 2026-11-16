@@ -15,6 +15,7 @@ end
 function (@main)(args)
     return run_cli(args, "jdrun-cuda", :ka_cuda; check_device)
 end
+julia_main()::Cint = main(ARGS)
 
 @compile_workload begin
     if device_available()

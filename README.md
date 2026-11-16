@@ -93,6 +93,29 @@ mpiexec -n 4 jdrun-mpi MODEL.DATA
 On Windows, use `mpiexec -n 4 cmd.exe /c jdrun-mpi MODEL.DATA`.
 Pass `--threads=2 --` before the case path to set the thread count per rank.
 
+## Build a standalone executable
+
+From the repository root, choose `ka`, `hypre`, `mpi`, `cuda`, or `amdgpu` under
+`executables/`. Pass any `.DATA`, `.AFI`, or `.jl` cases you want to use for warmup.
+
+```sh
+julia --project=executables -e "using Pkg; Pkg.instantiate()"
+julia --project=executables executables/ka/build.jl MODEL.DATA "another case.jl"
+```
+
+Each case warms up the app's default solver on its first report step, in a
+separate process with temporary output. The example builds the bundle under
+`executables/ka/build/jdrun-ka` with the executable in `bin/` (`.exe` on Windows).
+Keep the bundle together when moving it. Use `--output-path` to choose another
+destination, `--cpu-target generic` to build for a wider range of CPUs, and
+`--julia-args --threads=8` to set threads when running the executable.
+[PackageCompiler apps](https://julialang.github.io/PackageCompiler.jl/stable/apps.html)
+
+GPU warmups require a working device. Build the MPI app outside `mpiexec` so the
+warmup runs on one rank. Launch the resulting executable with the same MPI
+implementation used for the build. `--include-lazy-artifacts` bundles optional
+dependency datasets for offline use.
+
 ## Develop locally
 
 Clone the repository and start Julia from the variant you want to develop.
