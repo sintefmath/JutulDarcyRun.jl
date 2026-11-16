@@ -8,7 +8,7 @@ import JutulDarcy
 using JutulDarcy: ReservoirSimResult, setup_mini_wellcase, setup_reservoir_simulator
 using JutulDarcyRun: MAX_PRECOMPILE_COMPONENTS, check_solver_layout, limit_case, load_case,
     normalize_reservoir_variables!, parse_commandline, precompile_compositional_case,
-    precompile_smoothers, publish_output, run_cli, simulation_kwargs, with_run_log
+    precompile_olympus_setup, precompile_smoothers, publish_output, run_cli, simulation_kwargs, with_run_log
 using PrecompileTools: @compile_workload
 
 include("mpi.jl")
@@ -32,6 +32,7 @@ function precompile_mpi()
     MPI.Init()
     comm = MPI.COMM_WORLD
     MPI.Comm_size(comm) == 1 || return nothing
+    precompile_olympus_setup(; split_wells = true)
     args = parse_commandline(["case.jl", "--info-level", "-1"], "jdrun-mpi", :mpi)
     mktempdir() do dir
         for physics in (:single_phase, :immiscible_2ph)

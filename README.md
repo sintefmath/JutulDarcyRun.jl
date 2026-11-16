@@ -10,7 +10,7 @@ want.
 ```julia
 using Pkg
 repo = "https://github.com/sintefmath/JutulDarcyRun.jl.git"
-Pkg.Apps.add(url=repo, subdir="apps/ka")      # jdrun (CPU KernelAbstractions)
+Pkg.Apps.add(url=repo, subdir="apps/ka")      # jdrun-ka (CPU KernelAbstractions)
 Pkg.Apps.add(url=repo, subdir="apps/hypre")   # jdrun-hypre
 Pkg.Apps.add(url=repo, subdir="apps/mpi")     # jdrun-mpi
 Pkg.Apps.add(url=repo, subdir="apps/cuda")    # jdrun-cuda
@@ -20,26 +20,24 @@ Pkg.Apps.add(url=repo, subdir="apps/amdgpu")  # jdrun-amdgpu
 Add the `bin` directory of your first Julia depot to `PATH`. The default is
 `~/.julia/bin` on Linux and macOS and `%USERPROFILE%\.julia\bin` on Windows.
 
-If you installed `jdrun` from the repository root, run `app rm JutulDarcyRun`
-at the package prompt before installing `apps/ka`.
-
 ## Run a case
 
 From the terminal, run
 
 ```sh
-jdrun MODEL.DATA
-jdrun MODEL.DATA --number-of-steps 1 --output-path results
-jdrun --help
+jdrun-ka MODEL.DATA
+jdrun-ka MODEL.DATA --number-of-steps 1 --output-path results
+jdrun-ka --help
 ```
 
 Inputs can be Eclipse `.DATA` decks, `.AFI` files, or Julia scripts that define a
 top-level `case::JutulCase`.
 
 Results go in `<case>_jutul_output` next to the input. The Eclipse output includes
-the grid (`.EGRID`), report-step states (`.UNRST`), and summary (`.SMSPEC` and
-`.UNSMRY`). The live `<case>.DBG` log captures terminal output. For MPI, it
-records rank 0. Add `--vtk` for ParaView files or `--csv` for summary time series.
+the grid (`.EGRID`), report-step states and well completions for plotting
+(`.UNRST`), and summary (`.SMSPEC` and `.UNSMRY`). The live `<case>.DBG` log
+captures terminal output. For MPI, it records rank 0. Add `--vtk` for ParaView
+files or `--csv` for summary time series.
 `--output-substates` includes internal timesteps in the summary, CSV, and VTK
 output for single-process runs.
 
@@ -74,7 +72,7 @@ To change the count for one run, pass `--threads` before the first `--`.
 Pass the case path and solver options after it. [Julia Pkg app flags](https://pkgdocs.julialang.org/v1/apps/#Runtime-Julia-Flags)
 
 ```sh
-jdrun --threads=4 -- MODEL.DATA --precond cpr
+jdrun-ka --threads=4 -- MODEL.DATA --precond cpr
 jdrun-cuda --threads=16 -- MODEL.DATA
 ```
 

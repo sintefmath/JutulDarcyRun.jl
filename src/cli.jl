@@ -4,18 +4,22 @@ const AMG_UPDATE_TYPES = (:memory, :sparsity, :partial_sparsity, :partial_operat
 const CPR_UPDATE_INTERVALS = (:once, :iteration, :ministep, :step)
 const CPR_REBUILD_OPTIONS = (:amg_rebuild_tolerance, :update_type, :update_type_partial,
     :update_interval, :update_interval_partial, :partial_update)
+const DEFAULT_GLOBAL_SMOOTHER = :dilu
 
-function parse_commandline(argv, command, mode)
+function commandline_settings(command, mode)
     gpu = mode in (:ka_cuda, :ka_amd)
     precond_help = if gpu
-        "Preconditioner (cprw by default, cpr, ilu0, dilu or spai0)"
+        "Preconditioner (cprw, cpr, ilu0, dilu or spai0). Defaults to cprw where supported, cpr for other block systems, or dilu for scalar systems."
     elseif mode == :mpi
-        "Preconditioner (cpr by default, ilu0, dilu, jacobi or spai0)"
+        "Preconditioner (cpr, ilu0, dilu, jacobi or spai0). Defaults to cpr for blocks of mass equations or dilu otherwise."
     else
-        "Preconditioner (cprw by default, cpr, ilu0, dilu, jacobi or spai0)"
+        "Preconditioner (cprw, cpr, ilu0, dilu, jacobi or spai0). Defaults to cprw where supported, cpr for other block systems, or dilu for scalar systems."
     end
+    # Leave delegated options unset so case and solver defaults still apply.
+    input_default(key) = JutulDarcy.reservoir_simulation_input_defaults(nothing, key)
     settings = ArgParseSettings(
         prog = command,
+        usage = "usage: $command [options] filename",
         description = "Run a JutulDarcy reservoir simulation and export unified Eclipse results.",
         version = string(pkgversion(@__MODULE__)),
         add_version = true,
@@ -44,104 +48,105 @@ function parse_commandline(argv, command, mode)
             arg_type = Symbol
             range_tester = x -> x in (:gmres, :fgmres, :bicgstab)
         "--single-precision-linear-solver"
-            help = "Use a Float32 linear solver with FGMRES (true or false, enabled by default on GPU)"
+            help = gpu ? "Use Float32 (true or false). Defaults to true with FGMRES and false with other solvers." :
+                "Use Float32 with FGMRES on CPU KA (true or false). Default is false."
             arg_type = Bool
         "--precond"
             help = precond_help
             arg_type = Symbol
             range_tester = x -> x in (:cprw, :cpr, STANDALONE_PRECONDITIONERS...) && !(gpu && x == :jacobi)
         "--global-smoother"
-            help = gpu ? "CPR full-system smoother (dilu by default, ilu0, spai0 or vendor_ilu)" :
-                "CPR full-system smoother (dilu by default, ilu0, jacobi or spai0)"
+            help = gpu ? "CPR full-system smoother (dilu, ilu0, spai0 or vendor_ilu). Default is $DEFAULT_GLOBAL_SMOOTHER." :
+                "CPR full-system smoother (dilu, ilu0, jacobi or spai0). Default is $DEFAULT_GLOBAL_SMOOTHER."
             arg_type = Symbol
             range_tester = x -> x in GLOBAL_SMOOTHERS
         "--amg-rebuild-tolerance"
-            help = "Relative pressure-matrix change needed for a scheduled full KA AMG rebuild (0 always rebuilds)"
+            help = "Relative pressure-matrix change needed for a scheduled full KA AMG rebuild (0 always rebuilds). Default is 0.05."
             arg_type = Float64
             range_tester = x -> x >= 0
         "--update-type"
-            help = "KA AMG reuse on full updates (memory, sparsity, partial_sparsity, partial_operators or operators)"
+            help = "KA AMG reuse on full updates (memory, sparsity, partial_sparsity, partial_operators or operators). Defaults to partial_sparsity with zero rebuild tolerance and memory otherwise."
             arg_type = Symbol
             range_tester = x -> x in AMG_UPDATE_TYPES
         "--update-type-partial"
-            help = "KA AMG reuse on partial updates (same values as --update-type)"
+            help = "KA AMG reuse on partial updates (same choices as --update-type). Default is operators."
             arg_type = Symbol
             range_tester = x -> x in AMG_UPDATE_TYPES
         "--update-interval"
-            help = "Schedule for full CPR updates (once, iteration, ministep or step)"
+            help = "Schedule for full CPR updates (once, iteration, ministep or step). Default is ministep."
             arg_type = Symbol
             range_tester = x -> x in CPR_UPDATE_INTERVALS
         "--update-interval-partial"
-            help = "Schedule for partial CPR updates (same values as --update-interval)"
+            help = "Schedule for partial CPR updates (same choices as --update-interval). Default is iteration."
             arg_type = Symbol
             range_tester = x -> x in CPR_UPDATE_INTERVALS
         "--partial-update"
-            help = "Allow partial CPR updates between full updates (true or false)"
+            help = "Allow partial CPR updates between full updates (true or false). Default is true."
             arg_type = Bool
         "--ka-workgroupsize"
-            help = "KernelAbstractions workgroup size"
+            help = "KernelAbstractions workgroup size. Default is 256."
             arg_type = Int
             range_tester = x -> x > 0
         "--rtol"
-            help = "Relative linear solver tolerance"
+            help = "Relative linear solver tolerance. Defaults to 0.005 for CPR or CPRW and 0.01 for standalone smoothers."
             arg_type = Float64
             range_tester = x -> 0 < x < 1
         "--tol-cnv"
-            help = "CNV tolerance for mass balance"
+            help = "CNV tolerance for mass balance. Defaults to deck TUNING or $(input_default(:tol_cnv))."
             arg_type = Float64
             range_tester = x -> isfinite(x) && x > 0
         "--tol-mb"
-            help = "Scaled L1 mass balance tolerance"
+            help = "Scaled L1 mass balance tolerance. Defaults to deck TUNING or $(input_default(:tol_mb))."
             arg_type = Float64
             range_tester = x -> isfinite(x) && x > 0
         "--tol-dp-well"
-            help = "Well connection pressure drop tolerance in bar"
+            help = "Well connection pressure drop tolerance in bar. Default is 0.001."
             arg_type = Float64
             range_tester = x -> isfinite(x) && x > 0
         "--tol-factor-final-iteration"
-            help = "Factor applied to tolerances on the final Newton iteration"
+            help = "Factor applied to tolerances on the final Newton iteration. Default is 1.0."
             arg_type = Float64
             range_tester = x -> isfinite(x) && x > 0
         "--relaxation"
-            help = "Use nonlinear solver damping (true or false)"
+            help = "Use nonlinear solver damping (true or false). Default is false."
             arg_type = Bool
         "--max-nonlinear-iterations"
-            help = "Maximum Newton iterations before cutting a timestep"
+            help = "Maximum Newton iterations before cutting a timestep. Default is 15."
             arg_type = Int
             range_tester = x -> 1 <= x <= 10000
         "--max-timestep-cuts"
-            help = "Maximum cuts per internal timestep"
+            help = "Maximum cuts per internal timestep. Default is 25."
             arg_type = Int
             range_tester = x -> 0 <= x <= 10000
         "--presolve-wells"
-            help = "Solve wells before each linearization (true or false)"
+            help = "Solve wells before each linearization (true or false). Default is false."
             arg_type = Bool
     end
 
     add_arg_group!(settings, "Timestepping")
     @add_arg_table! settings begin
         "--number-of-steps"
-            help = "Limit the number of report steps"
+            help = "Limit the number of report steps. Runs all report steps by default."
             arg_type = Int
             range_tester = x -> x > 0
         "--timesteps"
-            help = "Adaptive timestep selectors (auto, iteration or none). Step limits and cuts still apply."
+            help = "Adaptive timestep selectors (auto, iteration or none). Default is auto. Step limits and cuts still apply."
             arg_type = Symbol
             range_tester = x -> x in (:auto, :iteration, :none)
         "--timesteps-target-iterations"
-            help = "Target Newton iterations for timestep selection"
+            help = "Target Newton iterations for timestep selection. Default is 8."
             arg_type = Int
             range_tester = x -> x > 0
         "--timesteps-target-ds"
-            help = "Maximum target saturation change as a fraction (requires jdrun-hypre and auto timestepping)"
+            help = "Target saturation change as a fraction (requires jdrun-hypre and auto timestepping). Disabled by default."
             arg_type = Float64
             range_tester = x -> 0 < x <= 1
         "--initial-timestep"
-            help = "Initial timestep in days"
+            help = "Initial timestep in days. Defaults to deck TUNING or $(input_default(:initial_dt) / si_unit(:day)) day."
             arg_type = Float64
             range_tester = x -> isfinite(x) && x > 0
         "--max-timestep"
-            help = "Maximum timestep in days"
+            help = "Maximum timestep in days. Defaults to deck TUNING or $(input_default(:max_timestep) / si_unit(:day)) days."
             arg_type = Float64
             range_tester = x -> x > 0
     end
@@ -150,7 +155,7 @@ function parse_commandline(argv, command, mode)
     if gpu
         @add_arg_table! settings begin
             "--wells-on-device"
-                help = "Merge similar wells and solve them on the GPU (true by default)"
+                help = "Merge similar wells and evaluate them on the GPU"
                 arg_type = Bool
                 default = true
         end
@@ -175,9 +180,9 @@ function parse_commandline(argv, command, mode)
             help = "Include internal timesteps in summary, CSV, and VTK output (single process)"
             action = :store_true
         "--info-level"
-            help = "Simulation verbosity (-1 for quiet)"
-            arg_type = Int
-            default = 1
+            help = "Simulation verbosity. Fractional levels are accepted. Use -1 for quiet."
+            arg_type = Float64
+            default = 1.0
         "--report-level"
             help = "Internal Jutul report detail (0 for compact statistics, 1 or higher for iteration details)"
             arg_type = Int
@@ -190,7 +195,11 @@ function parse_commandline(argv, command, mode)
             help = "Print well results after simulation"
             action = :store_true
     end
-    return parse_args(argv, settings; as_symbols = true)
+    return settings
+end
+
+function parse_commandline(argv, command, mode)
+    return parse_args(argv, commandline_settings(command, mode); as_symbols = true)
 end
 
 function solver_smoother(args, mode)
@@ -204,7 +213,8 @@ function solver_smoother(args, mode)
     gpu = mode in (:ka_cuda, :ka_amd)
     smoother == :vendor_ilu && !gpu && throw(ArgumentError("--global-smoother vendor_ilu requires a GPU launcher"))
     smoother == :jacobi && gpu && throw(ArgumentError("Jacobi is available on CPU backends"))
-    if isnothing(smoother) || smoother == :dilu
+    smoother = something(smoother, DEFAULT_GLOBAL_SMOOTHER)
+    if smoother == :dilu
         return :ka_dilu
     elseif smoother == :jacobi && mode == :ka
         # KA CPU uses host vectors, but its symbolic smoother factory has no Jacobi entry.

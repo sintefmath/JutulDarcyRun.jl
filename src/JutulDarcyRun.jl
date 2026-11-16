@@ -17,6 +17,7 @@ const MAX_PRECOMPILE_COMPONENTS = 5
 include("cli.jl")
 include("logging.jl")
 include("simulation.jl")
+include("restart_wells.jl")
 include("precompile.jl")
 
 end

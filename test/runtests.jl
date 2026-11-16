@@ -1,8 +1,42 @@
 using Jutul, JutulDarcy, JutulDarcyRun, Test
 
 function options(mode, flags...)
-    args = JutulDarcyRun.parse_commandline(["case.jl", "--info-level", "-1", flags...], "jdrun", mode)
+    args = JutulDarcyRun.parse_commandline(["case.jl", "--info-level", "-1", flags...], "jdrun-ka", mode)
     return JutulDarcyRun.simulation_kwargs(args, mode)
+end
+
+@testset "Command-line help and verbosity" begin
+    app = JutulDarcyRun
+    settings = app.commandline_settings("jdrun-ka", :ka)
+    help = sprint(io -> app.ArgParse.show_help(io, settings; exit_when_done = false))
+    words = join(split(help), " ")
+    @test startswith(words, "usage: jdrun-ka [options] filename")
+    @test occursin("Default is 0.05.", words)
+    @test occursin("Defaults to partial_sparsity with zero rebuild tolerance and memory otherwise.", words)
+    @test occursin("type: Float64, default: 1.0", words)
+    for mode in (:ka, :default, :mpi, :ka_cuda, :ka_amd)
+        args = app.parse_commandline(["case.jl"], "jdrun-ka", mode)
+        @test args[:info_level] === 1.0
+        @test args[:amg_rebuild_tolerance] === nothing
+        @test options(mode, "--info-level", "0.5")[:info_level] === 0.5
+    end
+end
+
+@testset "Quiet deck setup during precompilation" begin
+    app = JutulDarcyRun
+    deck = joinpath(pkgdir(JutulDarcy), "test", "data", "thermal", "TRACER_SMALL.DATA")
+    mktempdir() do dir
+        output = joinpath(dir, "setup.log")
+        redirect_stdio(; stdout = output, stderr = output) do
+            app.load_case(deck, ".data"; verbose = false, split_wells = false)
+        end
+        @test occursin("RUNSPEC/TRACERS", read(output, String))
+        case = redirect_stdio(; stdout = output, stderr = output) do
+            app.load_precompile_deck(deck)
+        end
+        @test case isa JutulCase
+        @test isempty(read(output, String))
+    end
 end
 
 @testset "CPRW default and override" begin
@@ -19,7 +53,7 @@ end
         @test config[:linear_solver].preconditioner.variant == :cprw
     end
     single = JutulDarcy.setup_mini_wellcase(:single_phase; nstep = 1, block_backend = true)
-    args = JutulDarcyRun.parse_commandline(["case.jl"], "jdrun", :ka)
+    args = JutulDarcyRun.parse_commandline(["case.jl"], "jdrun-ka", :ka)
     @test JutulDarcyRun.case_preconditioner(case, args, :cprw) == :cprw
     @test JutulDarcyRun.case_preconditioner(single, args, :cprw) == :dilu
     tracer = JutulDarcyRun.precompile_case(:deck_tracer, false)
@@ -111,6 +145,44 @@ end
     JutulDarcyRun.normalize_reservoir_variables!(olympus)
     @test reservoir.secondary_variables[:FluidVolume] === rock
     @test length(olympus.dt) == 1
+end
+
+@testset "Restart well completions" begin
+    app = JutulDarcyRun
+    geo = JutulDarcy.GeoEnergyIO
+    mktempdir() do dir
+        deck = read(joinpath(@__DIR__, "data", "OLYMPUS_SMALL.DATA"), String)
+        path = joinpath(dir, "case.DATA")
+        write(path, replace(deck, "\nPROPS" => "\nACTNUM\n 1 1 0 1 /\nPROPS"))
+        case = app.load_case(path, ".data"; verbose = false, split_wells = false)
+        (; dims, cell_map) = app.grid_layout(case)
+        @test cell_map == [1, 2, 4]
+        pressure(step) = Float32[10, 20, 30] .* step
+        writer = geo.StandardIO.output
+        blocks = map(1:2) do step
+            headers = writer.standard_headers(dims, length(cell_map); elapsed = step * 86400, report_step = step)
+            writer.restart_block(headers, (geo.BinaryKeyword("PRESSURE", pressure(step)),); report_step = step)
+        end
+        for model_case in (case, JutulDarcy.merge_similar_wells(case))
+            restart = geo.write_restart(blocks, joinpath(dir, "CASE"))
+            app.add_restart_wells(restart, model_case)
+            app.add_restart_wells(restart, model_case)
+            reports, raw = geo.read_restart(restart; extra_out = true)
+            @test length(reports) == 2
+            for (step, report) in enumerate(reports)
+                @test report["PRESSURE"] == pressure(step)
+                @test report["days"] == step
+                @test length(geo.keyword_values(raw[step], "ZWEL")) == 1
+                nwells, ncwmax, niwelz, nzwelz, niconz = report["INTEHEAD"][[17, 18, 25, 28, 33]]
+                names = reshape(report["ZWEL"], nzwelz, nwells)
+                counts = reshape(report["IWEL"], niwelz, nwells)
+                connections = reshape(report["ICON"], niconz, ncwmax, nwells)
+                @test counts[5, :] == [1, 1]
+                @test Dict(names[1, i] => Tuple(connections[2:4, 1, i]) for i in 1:nwells) ==
+                    Dict("I1" => (1, 1, 1), "P1" => (4, 1, 1))
+            end
+        end
+    end
 end
 
 @testset "Run log" begin

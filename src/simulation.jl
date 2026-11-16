@@ -111,7 +111,8 @@ end
 function publish_output(result, case, scratch, output_dir, name, args)
     standard = mkdir(joinpath(scratch, "standard"))
     # Write a complete set of standard files before replacing any previous output.
-    write_standard_output(result, case, joinpath(standard, "CASE"); unified = true)
+    paths = write_standard_output(result, case, joinpath(standard, "CASE"); unified = true)
+    add_restart_wells(paths.restart, case)
     files = [(joinpath(standard, file), joinpath(output_dir, name * splitext(file)[2]))
         for file in readdir(standard)]
     formats = ["unified Eclipse"]

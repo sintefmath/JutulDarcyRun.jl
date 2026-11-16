@@ -35,7 +35,27 @@ function precompile_case(physics, thermal)
     else
         return JutulDarcy.setup_mini_wellcase(physics; nstep = 1, total_time = 60.0, block_backend = true)
     end
-    return load_case(deck, ".data"; verbose = false, split_wells = false)[1:1]
+    return load_precompile_deck(deck)[1:1]
+end
+
+function load_precompile_deck(deck; split_wells = false)
+    # Keep case setup diagnostics quiet while letting failures reach the workload handler.
+    return redirect_stdio(; stdout = devnull, stderr = devnull) do
+        load_case(deck, ".data"; verbose = false, split_wells)
+    end
+end
+
+function precompile_olympus_setup(; split_wells = false, strict = true)
+    try
+        deck = JutulDarcy.GeoEnergyIO.test_input_file_path("OLYMPUS_1", "OLYMPUS_1.DATA")
+        case = load_precompile_deck(deck; split_wells)
+        return normalize_reservoir_variables!(case)
+    catch err
+        err isa InterruptException && rethrow()
+        @warn "OLYMPUS_1 case setup precompile workload failed" split_wells exception = (err, catch_backtrace())
+        strict && rethrow()
+        return nothing
+    end
 end
 
 function precompile_compositional_case(ncomponents; split_wells = false)
@@ -125,6 +145,7 @@ function precompile_smoothers(::Val{N}, mode) where N
 end
 
 function precompile_simulations(mode, command; strict = true)
+    precompile_olympus_setup(; strict)
     mktempdir() do dir
         args = parse_commandline(["case.jl", "--info-level", "-1"], command, mode)
         for (physics, thermal) in PRECOMPILE_CASES
